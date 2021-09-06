@@ -34,7 +34,7 @@ impl Variable {
     }
 
     /// get Satisfaction for this variable
-    pub fn satisfaction(&self, answer: &Vec<Literal>) -> Satisfaction {
+    pub fn satisfaction(&self, answer: &[Literal]) -> Satisfaction {
         for item in answer {
             if item.references(self) {
                 return match item.value() {
@@ -47,17 +47,17 @@ impl Variable {
     }
 
     /// shortcut for `self.satisfaction(answer) == Satisfaction::True`
-    pub fn is_true(&self, answer: &Vec<Literal>) -> bool {
+    pub fn is_true(&self, answer: &[Literal]) -> bool {
         self.satisfaction(answer) == Satisfaction::True
     }
 
     /// shortcut for `self.satisfaction(answer) == Satisfaction::False`
-    pub fn is_false(&self, answer: &Vec<Literal>) -> bool {
+    pub fn is_false(&self, answer: &[Literal]) -> bool {
         self.satisfaction(answer) == Satisfaction::False
     }
 
     /// shortcut for `self.satisfaction(answer) == Satisfaction::DontCare`
-    pub fn is_dontcare(&self, answer: &Vec<Literal>) -> bool {
+    pub fn is_dontcare(&self, answer: &[Literal]) -> bool {
         self.satisfaction(answer) == Satisfaction::DontCare
     }
 }
@@ -78,6 +78,12 @@ impl Variables {
         let result = Variable(self.index);
         self.index += 1;
         result
+    }
+}
+
+impl Default for Variables {
+    fn default() -> Self {
+        Variables { index: 1 }
     }
 }
 
@@ -108,7 +114,7 @@ impl Literal {
         self.0.abs() == valiable.0 as i32
     }
 
-    fn to_parts(&self) -> (bool, Variable) {
+    fn to_parts(self) -> (bool, Variable) {
         (self.0 >= 0, Variable(self.0.abs() as u32))
     }
 
@@ -124,8 +130,9 @@ impl From<(bool, Variable)> for Literal {
 }
 
 /// One literal rule : find erase-able literal from input
+#[allow(clippy::ptr_arg)]
 pub fn dpll_find_one_literal(input: &Cnf) -> Option<Literal> {
-    for node in input {
+    for node in input.iter() {
         if node.len() == 1 {
             return Some(node[0]);
         }
@@ -137,18 +144,19 @@ pub fn dpll_find_one_literal(input: &Cnf) -> Option<Literal> {
 pub fn dpll_erase_one_literal(input: &mut Cnf, item: Literal) {
     let remove_item = item.not();
     input.retain(|n| !n.contains(&item));
-    for node in input {
+    for node in input.iter_mut() {
         node.retain(|f| *f != remove_item);
     }
 }
 
 /// Pure literal rule : find erase-able literal from input
+#[allow(clippy::ptr_arg)]
 pub fn dpll_find_pure_literal(input: &Cnf) -> Option<Literal> {
     let mut positive_set = HashSet::new();
     let mut negative_set = HashSet::new();
 
-    for node in input {
-        for item in node {
+    for node in input.iter() {
+        for item in node.iter() {
             let (positive, index) = item.to_parts();
             if positive {
                 positive_set.insert(index);
@@ -184,7 +192,7 @@ pub fn dpll_split(input: &mut Cnf, point: &Variable) -> (Cnf, i32, i32) {
     while let Some(node) = input.pop() {
         if node.contains(&point.t()) {
             let mut items = Vec::new();
-            for item in &node {
+            for item in node.iter() {
                 if !item.references(point) {
                     items.push(*item);
                     count1 += 1;
@@ -194,7 +202,7 @@ pub fn dpll_split(input: &mut Cnf, point: &Variable) -> (Cnf, i32, i32) {
         }
         if node.contains(&point.f()) {
             let mut items = Vec::new();
-            for item in &node {
+            for item in node.iter() {
                 if !item.references(point) {
                     items.push(*item);
                     count2 += 1;
@@ -211,27 +219,30 @@ pub fn dpll_split(input: &mut Cnf, point: &Variable) -> (Cnf, i32, i32) {
 }
 
 /// check input is SAT
+#[allow(clippy::ptr_arg)]
 pub fn is_sat(input: &Cnf) -> bool {
-    input.len() == 0
+    input.is_empty()
 }
 
 /// check input is UNSAT
+#[allow(clippy::ptr_arg)]
 fn is_unsat(input: &Cnf) -> bool {
-    for node in input {
-        if node.len() == 0 {
+    for node in input.iter() {
+        if node.is_empty() {
             return true;
         }
     }
-    return false;
+    false
 }
 
 /// find variable used often in input
+#[allow(clippy::ptr_arg)]
 pub fn find_max_used_variable(input: &Cnf) -> Option<Variable> {
     let mut counts = HashMap::new();
     let mut max_count = 0;
     let mut max_key = None;
-    for node in input {
-        for item in node {
+    for node in input.iter() {
+        for item in node.iter() {
             let (_, v) = item.to_parts();
             let count = counts.entry(v).or_insert(0);
             *count += 1;
@@ -249,27 +260,27 @@ fn solve_partial(input: &mut Cnf) -> Option<Vec<Literal>> {
     let mut result = Vec::new();
 
     // erase one literal / erase pure literal
-    while dpll_find_one_literal(&input).is_some() || dpll_find_pure_literal(&input).is_some() {
+    while dpll_find_one_literal(input).is_some() || dpll_find_pure_literal(input).is_some() {
         // can I apply "one literal rule" ?
-        while let Some(lit) = dpll_find_one_literal(&input) {
+        while let Some(lit) = dpll_find_one_literal(input) {
             // add lit to answer
             result.push(lit);
             // apply one literal rule
             dpll_erase_one_literal(input, lit);
             // is SAT? (SAT check is very fast , then use to shortcat)
-            if is_sat(&input) {
+            if is_sat(input) {
                 return Some(result);
             }
         }
         // On now, "one literal rule" can't apply.
         // can I apply "pure literal rule"?
-        if let Some(lit) = dpll_find_pure_literal(&input) {
+        if let Some(lit) = dpll_find_pure_literal(input) {
             // add lit to answer
             result.push(lit);
             // apply pure literal rule
             dpll_erase_pure_literal(input, lit);
             // is SAT? (SAT check is very fast , then use to shortcat)
-            if is_sat(&input) {
+            if is_sat(input) {
                 return Some(result);
             }
         }
@@ -323,14 +334,14 @@ fn solve_partial(input: &mut Cnf) -> Option<Vec<Literal>> {
 
 pub fn solve_one(input: &mut Cnf) -> Option<Vec<Literal>> {
     let partial_result = solve_partial(input);
-    if is_unsat(&input) {
+    if is_unsat(input) {
         return None;
     }
     if let Some(mut result) = partial_result {
-        if is_sat(&input) {
+        if is_sat(input) {
             return Some(result);
         }
-        let split_point = find_max_used_variable(&input).unwrap();
+        let split_point = find_max_used_variable(input).unwrap();
         let (mut false_part, t_count, f_count) = dpll_split(input, &split_point);
         if t_count <= f_count {
             if let Some(child_result) = solve_one(input) {
@@ -358,13 +369,13 @@ pub fn solve_one(input: &mut Cnf) -> Option<Vec<Literal>> {
 fn continue_solve(prefix: Vec<Literal>, input: &mut Cnf) -> Vec<Vec<Literal>> {
     let partial_result = solve_partial(input);
     let prefix = [prefix, partial_result.unwrap()].concat();
-    if is_unsat(&input) {
+    if is_unsat(input) {
         return vec![];
     }
-    if is_sat(&input) {
+    if is_sat(input) {
         return vec![prefix];
     }
-    let split_point = find_max_used_variable(&input).unwrap();
+    let split_point = find_max_used_variable(input).unwrap();
 
     let (mut false_part, _, _) = dpll_split(input, &split_point);
 
@@ -372,7 +383,7 @@ fn continue_solve(prefix: Vec<Literal>, input: &mut Cnf) -> Vec<Vec<Literal>> {
     true_prefix.push(split_point.t());
     let true_result = continue_solve(true_prefix, input);
 
-    let mut false_prefix = prefix.clone();
+    let mut false_prefix = prefix;
     false_prefix.push(split_point.f());
     let false_result = continue_solve(false_prefix, &mut false_part);
 
