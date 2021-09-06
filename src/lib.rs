@@ -92,3 +92,15 @@ pub fn solve_one(input: &mut Vec<Vec<Literal>>) -> Option<Vec<Literal>> {
 pub fn solve_all(input: &mut Vec<Vec<Literal>>) -> Vec<Vec<Literal>> {
     solver::solve_all(input)
 }
+
+/// Async version of solve_one
+#[cfg(feature = "async")]
+pub async fn solve_one_async(input: Vec<Vec<Literal>>) -> Option<Vec<Literal>> {
+    solver::async_solver::solve_one_async(input).await
+}
+
+/// Async version of solve_all
+#[cfg(feature = "async")]
+pub async fn solve_all_async(input: Vec<Vec<Literal>>) -> Vec<Vec<Literal>> {
+    solver::async_solver::solve_all_async(input).await
+}

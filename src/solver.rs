@@ -1,4 +1,8 @@
 use std::collections::{HashMap, HashSet};
+
+#[cfg(feature = "async")]
+pub mod async_solver;
+
 /// Conjunctive normal form for SAT input
 pub type Cnf = Vec<Vec<Literal>>;
 
