@@ -13,12 +13,12 @@
 //! let p = vars.create();
 //! let q = vars.create();
 //! let r = vars.create();
-//! let f = vec![
+//! let mut f = vec![
 //!    vec![ p.t(), q.t(), r.f() ],
 //!    vec![ p.f(), r.f() ],
 //!    vec![ r.t() ]
 //! ];
-//! match solve_one(f) {
+//! match solve_one(&mut f) {
 //!     Some(answer) => {
 //!         // SAT
 //!         assert_eq!(answer.len(), 3);
@@ -40,6 +40,9 @@
 use std::collections::{HashMap, HashSet};
 
 mod boolean_expression;
+
+/// Conjunctive normal form for SAT input
+pub type Cnf = Vec<Vec<Literal>>;
 
 /// SAT variable
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
@@ -163,7 +166,7 @@ impl From<(bool, Variable)> for Literal {
 }
 
 /// One literal rule : find erase-able literal from input
-pub fn dpll_find_one_literal(input: &Vec<Vec<Literal>>) -> Option<Literal> {
+pub fn dpll_find_one_literal(input: &Cnf) -> Option<Literal> {
     for node in input {
         if node.len() == 1 {
             return Some(node[0]);
@@ -173,7 +176,7 @@ pub fn dpll_find_one_literal(input: &Vec<Vec<Literal>>) -> Option<Literal> {
 }
 
 /// One literal rule : erase literal from input
-pub fn dpll_erase_one_literal(input: &mut Vec<Vec<Literal>>, item: Literal) {
+pub fn dpll_erase_one_literal(input: &mut Cnf, item: Literal) {
     let remove_item = item.not();
     input.retain(|n| !n.contains(&item));
     for node in input {
@@ -182,7 +185,7 @@ pub fn dpll_erase_one_literal(input: &mut Vec<Vec<Literal>>, item: Literal) {
 }
 
 /// Pure literal rule : find erase-able literal from input
-pub fn dpll_find_pure_literal(input: &Vec<Vec<Literal>>) -> Option<Literal> {
+pub fn dpll_find_pure_literal(input: &Cnf) -> Option<Literal> {
     let mut positive_set = HashSet::new();
     let mut negative_set = HashSet::new();
 
@@ -210,23 +213,20 @@ pub fn dpll_find_pure_literal(input: &Vec<Vec<Literal>>) -> Option<Literal> {
 }
 
 /// Pure literal rule : erase literal from input
-pub fn dpll_erase_pure_literal(input: &mut Vec<Vec<Literal>>, item: Literal) {
+pub fn dpll_erase_pure_literal(input: &mut Cnf, item: Literal) {
     input.retain(|n| !n.contains(&item));
 }
 
 /// Split rule : Split input on point variable
-pub fn dpll_split(
-    input: Vec<Vec<Literal>>,
-    point: &Variable,
-) -> (Vec<Vec<Literal>>, Vec<Vec<Literal>>, i32, i32) {
+pub fn dpll_split(input: &mut Cnf, point: &Variable) -> (Cnf, i32, i32) {
     let mut result1 = Vec::new();
     let mut result2 = Vec::new();
     let mut count1 = 0;
     let mut count2 = 0;
-    for ref node in input {
+    while let Some(node) = input.pop() {
         if node.contains(&point.t()) {
             let mut items = Vec::new();
-            for item in node {
+            for item in &node {
                 if !item.references(point) {
                     items.push(*item);
                     count1 += 1;
@@ -236,7 +236,7 @@ pub fn dpll_split(
         }
         if node.contains(&point.f()) {
             let mut items = Vec::new();
-            for item in node {
+            for item in &node {
                 if !item.references(point) {
                     items.push(*item);
                     count2 += 1;
@@ -245,16 +245,20 @@ pub fn dpll_split(
             result2.push(items);
         }
     }
-    (result1, result2, count1, count2)
+    // write back to input
+    while let Some(node) = result1.pop() {
+        input.push(node);
+    }
+    (result2, count1, count2)
 }
 
 /// check input is SAT
-pub fn is_sat(input: &Vec<Vec<Literal>>) -> bool {
+pub fn is_sat(input: &Cnf) -> bool {
     input.len() == 0
 }
 
 /// check input is UNSAT
-fn is_unsat(input: &Vec<Vec<Literal>>) -> bool {
+fn is_unsat(input: &Cnf) -> bool {
     for node in input {
         if node.len() == 0 {
             return true;
@@ -264,7 +268,7 @@ fn is_unsat(input: &Vec<Vec<Literal>>) -> bool {
 }
 
 /// find variable used often in input
-pub fn find_max_used_variable(input: &Vec<Vec<Literal>>) -> Option<Variable> {
+pub fn find_max_used_variable(input: &Cnf) -> Option<Variable> {
     let mut counts = HashMap::new();
     let mut max_count = 0;
     let mut max_key = None;
@@ -283,38 +287,37 @@ pub fn find_max_used_variable(input: &Vec<Vec<Literal>>) -> Option<Variable> {
 }
 
 /// repeating apply "erase one literal", and "erase pure literal"
-fn solve_partial(input: Vec<Vec<Literal>>) -> (Vec<Vec<Literal>>, Option<Vec<Literal>>) {
+fn solve_partial(input: &mut Cnf) -> Option<Vec<Literal>> {
     let mut result = Vec::new();
-    let mut f = input;
 
     // erase one literal / erase pure literal
-    while dpll_find_one_literal(&f).is_some() || dpll_find_pure_literal(&f).is_some() {
+    while dpll_find_one_literal(&input).is_some() || dpll_find_pure_literal(&input).is_some() {
         // can I apply "one literal rule" ?
-        while let Some(lit) = dpll_find_one_literal(&f) {
+        while let Some(lit) = dpll_find_one_literal(&input) {
             // add lit to answer
             result.push(lit);
             // apply one literal rule
-            dpll_erase_one_literal(&mut f, lit);
+            dpll_erase_one_literal(input, lit);
             // is SAT? (SAT check is very fast , then use to shortcat)
-            if is_sat(&f) {
-                return (f, Some(result));
+            if is_sat(&input) {
+                return Some(result);
             }
         }
         // On now, "one literal rule" can't apply.
         // can I apply "pure literal rule"?
-        if let Some(lit) = dpll_find_pure_literal(&f) {
+        if let Some(lit) = dpll_find_pure_literal(&input) {
             // add lit to answer
             result.push(lit);
             // apply pure literal rule
-            dpll_erase_pure_literal(&mut f, lit);
+            dpll_erase_pure_literal(input, lit);
             // is SAT? (SAT check is very fast , then use to shortcat)
-            if is_sat(&f) {
-                return (f, Some(result));
+            if is_sat(&input) {
+                return Some(result);
             }
         }
         // On now, sometime Can "one literal rule" , check on while block.
     }
-    (f, Some(result))
+    Some(result)
 }
 
 /// SAT solve and returns one result
@@ -337,12 +340,12 @@ fn solve_partial(input: Vec<Vec<Literal>>) -> (Vec<Vec<Literal>>, Option<Vec<Lit
 /// let p = vars.create();
 /// let q = vars.create();
 /// let r = vars.create();
-/// let f = vec![
+/// let mut f = vec![
 ///    vec![ p.t(), q.t(), r.f() ], //    ( P ||  Q || !R )
 ///    vec![ p.f(), r.f() ],        // && (!P || !R )
 ///    vec![ r.t() ]                // && ( R)
 /// ];
-/// match solve_one(f) {
+/// match solve_one(&mut f) {
 ///     Some(answer) => {
 ///         // SAT
 ///         assert_eq!(answer.len(), 3);
@@ -360,32 +363,32 @@ fn solve_partial(input: Vec<Vec<Literal>>) -> (Vec<Vec<Literal>>, Option<Vec<Lit
 /// }
 /// ```
 
-pub fn solve_one(input: Vec<Vec<Literal>>) -> Option<Vec<Literal>> {
-    let (f, partial_result) = solve_partial(input);
-    if is_unsat(&f) {
+pub fn solve_one(input: &mut Cnf) -> Option<Vec<Literal>> {
+    let partial_result = solve_partial(input);
+    if is_unsat(&input) {
         return None;
     }
     if let Some(mut result) = partial_result {
-        if is_sat(&f) {
+        if is_sat(&input) {
             return Some(result);
         }
-        let split_point = find_max_used_variable(&f).unwrap();
-        let (true_part, false_part, t_count, f_count) = dpll_split(f, &split_point);
+        let split_point = find_max_used_variable(&input).unwrap();
+        let (mut false_part, t_count, f_count) = dpll_split(input, &split_point);
         if t_count <= f_count {
-            if let Some(child_result) = solve_one(true_part) {
+            if let Some(child_result) = solve_one(input) {
                 result.push(split_point.t());
                 return Some([result, child_result].concat());
             }
-            if let Some(child_result) = solve_one(false_part) {
+            if let Some(child_result) = solve_one(&mut false_part) {
                 result.push(split_point.f());
                 return Some([result, child_result].concat());
             }
         } else {
-            if let Some(child_result) = solve_one(false_part) {
+            if let Some(child_result) = solve_one(&mut false_part) {
                 result.push(split_point.f());
                 return Some([result, child_result].concat());
             }
-            if let Some(child_result) = solve_one(true_part) {
+            if let Some(child_result) = solve_one(input) {
                 result.push(split_point.t());
                 return Some([result, child_result].concat());
             }
@@ -394,8 +397,8 @@ pub fn solve_one(input: Vec<Vec<Literal>>) -> Option<Vec<Literal>> {
     None
 }
 
-fn continue_solve(prefix: Vec<Literal>, input: Vec<Vec<Literal>>) -> Vec<Vec<Literal>> {
-    let (input, partial_result) = solve_partial(input);
+fn continue_solve(prefix: Vec<Literal>, input: &mut Cnf) -> Vec<Vec<Literal>> {
+    let partial_result = solve_partial(input);
     let prefix = [prefix, partial_result.unwrap()].concat();
     if is_unsat(&input) {
         return vec![];
@@ -405,21 +408,21 @@ fn continue_solve(prefix: Vec<Literal>, input: Vec<Vec<Literal>>) -> Vec<Vec<Lit
     }
     let split_point = find_max_used_variable(&input).unwrap();
 
-    let (true_part, false_part, _, _) = dpll_split(input, &split_point);
+    let (mut false_part, _, _) = dpll_split(input, &split_point);
 
     let mut true_prefix = prefix.clone();
     true_prefix.push(split_point.t());
-    let true_result = continue_solve(true_prefix, true_part);
+    let true_result = continue_solve(true_prefix, input);
 
     let mut false_prefix = prefix.clone();
     false_prefix.push(split_point.f());
-    let false_result = continue_solve(false_prefix, false_part);
+    let false_result = continue_solve(false_prefix, &mut false_part);
 
     [true_result, false_result].concat()
 }
 
 /// SAT solve and returns all result
-pub fn solve_all(input: Vec<Vec<Literal>>) -> Vec<Vec<Literal>> {
+pub fn solve_all(input: &mut Cnf) -> Vec<Vec<Literal>> {
     continue_solve(vec![], input)
 }
 
@@ -526,7 +529,8 @@ mod tests {
         assert_eq!(pure_lit, None);
         let one_lit = dpll_find_one_literal(&f);
         assert_eq!(one_lit, None);
-        let (mut t_part, mut f_part, c1, c2) = dpll_split(f, &s);
+        let (mut f_part, c1, c2) = dpll_split(&mut f, &s);
+        let mut t_part = f;
         assert_eq!(c1, 1);
         assert_eq!(c2, 1);
         assert_eq!(t_part.len(), 1);
@@ -553,8 +557,8 @@ mod tests {
         let p = vars.create();
         let q = vars.create();
         let r = vars.create();
-        let f = vec![vec![p.t(), q.t(), r.f()], vec![p.f(), r.f()], vec![r.t()]];
-        match solve_one(f) {
+        let mut f = vec![vec![p.t(), q.t(), r.f()], vec![p.f(), r.f()], vec![r.t()]];
+        match solve_one(&mut f) {
             Some(answer) => {
                 // Some means SAT
                 assert_eq!(answer.len(), 3);
@@ -576,13 +580,13 @@ mod tests {
         let p = vars.create();
         let u = vars.create();
 
-        let f = vec![
+        let mut f = vec![
             vec![s.t(), t.t()],
             vec![s.f(), t.f()],
             vec![p.t(), u.t()],
             vec![p.f(), u.t()],
         ];
-        let results = solve_all(f);
+        let results = solve_all(&mut f);
         assert!(!results.is_empty());
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].len(), 3);
