@@ -176,7 +176,7 @@ pub fn dpll_find_one_literal(input: &Vec<Vec<Literal>>) -> Option<Literal> {
 pub fn dpll_erase_one_literal(input: &mut Vec<Vec<Literal>>, item: Literal) {
     let remove_item = item.not();
     input.retain(|n| !n.contains(&item));
-    for mut node in input {
+    for node in input {
         node.retain(|f| *f != remove_item);
     }
 }
