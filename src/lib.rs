@@ -210,14 +210,8 @@ pub fn dpll_find_pure_literal(input: &Vec<Vec<Literal>>) -> Option<Literal> {
 }
 
 /// Pure literal rule : erase literal from input
-pub fn dpll_erase_pure_literal(input: Vec<Vec<Literal>>, item: Literal) -> Vec<Vec<Literal>> {
-    let mut result = Vec::new();
-    for node in input {
-        if !node.contains(&item) {
-            result.push(node)
-        }
-    }
-    result
+pub fn dpll_erase_pure_literal(input: &mut Vec<Vec<Literal>>, item: Literal) {
+    input.retain(|n| !n.contains(&item));
 }
 
 /// Split rule : Split input on point variable
@@ -312,7 +306,7 @@ fn solve_partial(input: Vec<Vec<Literal>>) -> (Vec<Vec<Literal>>, Option<Vec<Lit
             // add lit to answer
             result.push(lit);
             // apply pure literal rule
-            f = dpll_erase_pure_literal(f, lit);
+            dpll_erase_pure_literal(&mut f, lit);
             // is SAT? (SAT check is very fast , then use to shortcat)
             if is_sat(&f) {
                 return (f, Some(result));
@@ -441,12 +435,12 @@ mod tests {
         let mut vars = Variables::new();
         let var1 = vars.create();
         let var2 = vars.create();
-        let f = vec![vec![var1.t(), var2.f()], vec![var1.f()]];
+        let mut f = vec![vec![var1.t(), var2.f()], vec![var1.f()]];
         assert_eq!(dpll_find_pure_literal(&f), Some(var2.f()));
-        let r = dpll_erase_pure_literal(f, var2.f());
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].len(), 1);
-        assert_eq!(r[0][0], var1.f());
+        dpll_erase_pure_literal(&mut f, var2.f());
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].len(), 1);
+        assert_eq!(f[0][0], var1.f());
     }
 
     #[test]
@@ -512,7 +506,7 @@ mod tests {
         let p = vars.create();
         let u = vars.create();
 
-        let f = vec![
+        let mut f = vec![
             vec![s.t(), t.t()],
             vec![s.f(), t.f()],
             vec![p.t(), u.t()],
@@ -520,7 +514,7 @@ mod tests {
         ];
         let pure_lit = dpll_find_pure_literal(&f);
         assert_eq!(pure_lit, Some(u.t()));
-        let f = dpll_erase_pure_literal(f, pure_lit.unwrap());
+        dpll_erase_pure_literal(&mut f, pure_lit.unwrap());
         assert_eq!(f.len(), 2);
         assert_eq!(f[0].len(), 2);
         assert_eq!(f[0][0], s.t());
