@@ -173,18 +173,12 @@ pub fn dpll_find_one_literal(input: &Vec<Vec<Literal>>) -> Option<Literal> {
 }
 
 /// One literal rule : erase literal from input
-pub fn dpll_erase_one_literal(input: Vec<Vec<Literal>>, item: Literal) -> Vec<Vec<Literal>> {
+pub fn dpll_erase_one_literal(input: &mut Vec<Vec<Literal>>, item: Literal) {
     let remove_item = item.not();
-    let mut result = Vec::new();
+    input.retain(|n| !n.contains(&item));
     for mut node in input {
-        if node.contains(&item) {
-            continue;
-        } else {
-            node.retain(|f| *f != remove_item);
-            result.push(node)
-        }
+        node.retain(|f| *f != remove_item);
     }
-    result
 }
 
 /// Pure literal rule : find erase-able literal from input
@@ -306,7 +300,7 @@ fn solve_partial(input: Vec<Vec<Literal>>) -> (Vec<Vec<Literal>>, Option<Vec<Lit
             // add lit to answer
             result.push(lit);
             // apply one literal rule
-            f = dpll_erase_one_literal(f, lit);
+            dpll_erase_one_literal(&mut f, lit);
             // is SAT? (SAT check is very fast , then use to shortcat)
             if is_sat(&f) {
                 return (f, Some(result));
@@ -460,12 +454,12 @@ mod tests {
         let mut vars = Variables::new();
         let var1 = vars.create();
         let var2 = vars.create();
-        let f = vec![vec![var1.t(), var2.f()], vec![var1.f()]];
+        let mut f = vec![vec![var1.t(), var2.f()], vec![var1.f()]];
         assert_eq!(dpll_find_one_literal(&f), Some(var1.f()));
-        let r = dpll_erase_one_literal(f, var1.f());
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].len(), 1);
-        assert_eq!(r[0][0], var2.f());
+        dpll_erase_one_literal(&mut f, var1.f());
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].len(), 1);
+        assert_eq!(f[0][0], var2.f());
     }
 
     #[test]
@@ -475,7 +469,7 @@ mod tests {
         let p = vars.create();
         let q = vars.create();
         let r = vars.create();
-        let f = vec![
+        let mut f = vec![
             vec![p.t(), q.t(), r.f()],
             vec![q.f(), p.t()],
             vec![p.f()],
@@ -483,7 +477,7 @@ mod tests {
         ];
         let one_lit = dpll_find_one_literal(&f);
         assert_eq!(one_lit, Some(p.f()));
-        let f = dpll_erase_one_literal(f, one_lit.unwrap());
+        dpll_erase_one_literal(&mut f, one_lit.unwrap());
         assert_eq!(f.len(), 3);
         assert_eq!(f[0].len(), 2);
         assert_eq!(f[0][0], q.t());
@@ -496,7 +490,7 @@ mod tests {
 
         let one_lit = dpll_find_one_literal(&f);
         assert_eq!(one_lit, Some(q.f()));
-        let f = dpll_erase_one_literal(f, one_lit.unwrap());
+        dpll_erase_one_literal(&mut f, one_lit.unwrap());
         assert_eq!(f.len(), 2);
         assert_eq!(f[0].len(), 1);
         assert_eq!(f[0][0], r.f());
@@ -505,7 +499,7 @@ mod tests {
 
         let one_lit = dpll_find_one_literal(&f);
         assert_eq!(one_lit, Some(r.f()));
-        let f = dpll_erase_one_literal(f, one_lit.unwrap());
+        dpll_erase_one_literal(&mut f, one_lit.unwrap());
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].len(), 0); // f[0].len==0  -> UNSAT
     }
@@ -538,7 +532,7 @@ mod tests {
         assert_eq!(pure_lit, None);
         let one_lit = dpll_find_one_literal(&f);
         assert_eq!(one_lit, None);
-        let (t_part, f_part, c1, c2) = dpll_split(f, &s);
+        let (mut t_part, mut f_part, c1, c2) = dpll_split(f, &s);
         assert_eq!(c1, 1);
         assert_eq!(c2, 1);
         assert_eq!(t_part.len(), 1);
@@ -550,12 +544,12 @@ mod tests {
 
         let one_lit = dpll_find_one_literal(&t_part);
         assert_eq!(one_lit, Some(t.t()));
-        let t_part = dpll_erase_one_literal(t_part, one_lit.unwrap());
+        dpll_erase_one_literal(&mut t_part, one_lit.unwrap());
         assert_eq!(t_part.len(), 0); // SAT
 
         let one_lit = dpll_find_one_literal(&f_part);
         assert_eq!(one_lit, Some(t.f()));
-        let f_part = dpll_erase_one_literal(f_part, one_lit.unwrap());
+        dpll_erase_one_literal(&mut f_part, one_lit.unwrap());
         assert_eq!(f_part.len(), 0); // SAT
     }
 
