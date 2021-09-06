@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, fmt::Display, ops::Deref};
 
-use crate::{Variable, Variables};
+use crate::solver::{Variable, Variables};
 
 #[derive(Debug, PartialEq, Clone, Eq)]
 pub enum Node {
@@ -299,7 +299,7 @@ impl TreeBuilder {
 mod tests {
     use std::ops::Deref;
 
-    use crate::Variables;
+    use crate::solver::Variables;
 
     use super::{Node, TreeBuilder};
 
