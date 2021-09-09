@@ -40,7 +40,6 @@ async fn solve_async_internal(
             return;
         };
         tx_complete.send(None).await.unwrap();
-        return;
     }
 }
 
@@ -66,5 +65,5 @@ pub async fn solve_all_async(input: Cnf) -> Vec<Vec<Literal>> {
             answers.push(single_answer)
         } // else some branch reaches UNSAT
     }
-    return answers;
+    answers
 }
