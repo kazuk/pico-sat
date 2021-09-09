@@ -2,11 +2,16 @@ use std::{cmp::Ordering, fmt::Display, ops::Deref};
 
 use crate::solver::{Variable, Variables};
 
+/// boolean expression node
 #[derive(Debug, PartialEq, Clone, Eq)]
 pub enum Node {
+    /// Literal, references SAT variable
     Literal(Variable),
+    /// And, true if all Node is true
     And(Vec<Node>),
+    /// Or, true if any Node is true
     Or(Vec<Node>),
+    /// Node, true if Node is false
     Not(Box<Node>),
 }
 
@@ -118,14 +123,123 @@ impl Display for Node {
 }
 
 impl Node {
-    fn flatten(&self) -> Self {
+    /// convert node to OR( AND( NOT( Literal ))) form
+    ///
+    /// # Algorithm
+    ///
+    /// 1. recursively apply "de morgan's law" to Not-And, Not-Or.
+    ///   then, tree leaf is Literal or Not Literal
+    /// 2. recursively apply cross-product to And node, output results Or-And
+    /// 3. recursively apply flatten , marge And-And, marge Or-Or
+    ///
+    pub fn to_or_and_not_form(&self) -> Self {
+        fn items_from_or(or_node: Node) -> Vec<Node> {
+            match or_node {
+                Node::Or(items) => items,
+                _ => panic!("dont or node"),
+            }
+        }
+
+        fn cross_product_or_items(mut or_nodes: Vec<Node>) -> Vec<Node> {
+            let mut or_items = Vec::new();
+            if or_nodes.len() >= 2 {
+                // (A || B) && (C || D) ...
+                // (A&&C || A&&D || B&&C || B&&D)
+                let first_set = items_from_or(or_nodes.pop().unwrap());
+                let second_set = items_from_or(or_nodes.pop().unwrap());
+                for right in first_set {
+                    for left in &second_set {
+                        or_items.push(Node::And(vec![right.clone(), left.clone()]))
+                    }
+                }
+            } else {
+                // only 1 or node in this And
+                return or_nodes;
+            }
+
+            while let Some(Node::Or(childs)) = or_nodes.pop() {
+                let head = or_items;
+                or_items = Vec::new();
+                for right in head {
+                    for left in &childs {
+                        or_items.push(Node::And(vec![right.clone(), left.clone()]))
+                    }
+                }
+            }
+            or_items
+        }
+
+        match self {
+            Node::Literal(_) => self.to_owned(),
+            Node::And(items) => {
+                let children: Vec<Node> = items
+                    .iter()
+                    .map(|child| child.to_or_and_not_form())
+                    .collect();
+
+                // grouping children
+                //
+                // A && B && (C || D ) && E && (F || G)  =>
+                //   (A && B && E)
+                //    ~~~~~~~~~~~ and_node
+                //   && ( C || D ) && ( F|| G)
+                //      ~~~~~~~~~~~~~~~~~~~~~~ or_nodes
+                let mut or_nodes = Vec::new();
+                let mut other_nodes = Vec::new();
+                for item in children {
+                    match item {
+                        Node::Literal(_) | Node::And(_) | Node::Not(_) => other_nodes.push(item),
+                        Node::Or(_) => or_nodes.push(item),
+                    }
+                }
+                if other_nodes.is_empty() {
+                    return Node::Or(cross_product_or_items(or_nodes));
+                }
+                let and_node = Node::And(other_nodes);
+
+                // if not contains or, and_node is result
+                if or_nodes.is_empty() {
+                    return and_node;
+                }
+                // extract or_items
+                let or_items = cross_product_or_items(or_nodes);
+                // cross product
+                // (and_node) && (B || C) =>
+                //    (and_node && B) || (and_node && C)
+                Node::Or(
+                    or_items
+                        .iter()
+                        .map(|i| Node::And(vec![and_node.clone(), i.clone()]))
+                        .collect(),
+                )
+            }
+            Node::Or(items) => {
+                let children: Vec<Node> = items
+                    .iter()
+                    .map(|child| child.to_or_and_not_form())
+                    .collect();
+                Node::Or(children)
+            }
+            Node::Not(item) => match item.deref() {
+                Node::Literal(_) => self.clone(),
+                Node::Or(_) => self.apply_de_morgan_law().to_or_and_not_form(),
+                Node::And(_) => self.apply_de_morgan_law().to_or_and_not_form(),
+                Node::Not(not2) => not2.to_or_and_not_form(),
+            },
+        }
+    }
+
+    /// returns flatten represent for Node
+    ///
+    /// - marge nested Or (Or)
+    /// - marge nested And (And)
+    /// - convert Not(Not(x)) into x
+    ///
+    pub fn flatten(&self) -> Self {
         let result = match self {
             Node::Literal(_) => self.clone(),
             Node::Or(items) => {
-                let mut child_items = Vec::new();
-                for item in (*items).iter() {
-                    child_items.push(item.flatten())
-                }
+                let child_items: Vec<Node> = (*items).iter().map(|n| n.flatten()).collect();
                 // A || ( (B&&C) || D )
                 // =>  A || (B && C) || D
                 let mut or_items = Vec::new();
@@ -133,108 +247,56 @@ impl Node {
                     match child {
                         Node::Literal(_) => or_items.push(child),
                         Node::And(_) => or_items.push(child),
-                        Node::Or(or_content) => {
-                            for o in or_content {
-                                or_items.push(o)
-                            }
-                        }
+                        Node::Or(mut or_content) => or_items.append(&mut or_content),
                         Node::Not(_) => or_items.push(child),
                     }
                 }
                 Node::Or(or_items)
             }
             Node::And(items) => {
-                let mut child_items = Vec::new();
-                for item in (*items).iter() {
-                    child_items.push(item.flatten())
-                }
+                let child_items: Vec<Node> = (*items).iter().map(|n| n.flatten()).collect();
                 let mut and_items = Vec::new();
                 for child in child_items {
                     match child {
                         Node::Literal(_) => and_items.push(child),
-                        Node::And(and_content) => {
-                            for a in and_content.into_iter() {
-                                and_items.push(a)
-                            }
-                        }
+                        Node::And(mut and_content) => and_items.append(&mut and_content),
                         Node::Or(_) => and_items.push(child),
                         Node::Not(_) => and_items.push(child),
                     }
                 }
                 Node::And(and_items)
             }
-            Node::Not(_) => self.clone(),
+            Node::Not(child) => match child.deref() {
+                Node::Literal(_) | Node::And(_) | Node::Or(_) => self.clone(),
+                Node::Not(item) => item.deref().clone(),
+            },
         };
         result.compact()
     }
 
-    fn cross_product(&self) -> Self {
+    fn apply_de_morgan_law(&self) -> Self {
+        fn wrap_not(child: &Node) -> Node {
+            if let Node::Not(inner) = child {
+                inner.deref().to_owned()
+            } else {
+                Node::Not(Box::new(child.to_owned()))
+            }
+        }
+
+        fn wrap_child(items: &[Node]) -> Vec<Node> {
+            (*items).iter().map(|f| wrap_not(f)).collect()
+        }
+
         match self {
             Node::Literal(_) => self.clone(),
-            Node::Not(_) => self.clone(),
-            Node::And(items) => {
-                if items.len() < 2 {
-                    self.clone()
-                } else {
-                    // A && (B||C) && ~Q ... && Z=>
-                    // (A && (B||C)) && (A && ~Q) .. && (A&&Z) =>
-                    // (A&&B || A&&C) && (A && ~Q) .. && (A&&Z)
-                    let mut and_items = items.clone();
-                    let head = and_items.pop().unwrap();
-                    let mut new_items = Vec::new();
-                    for item in and_items {
-                        let new_node = match item.clone() {
-                            Node::Literal(_) => Node::And(vec![head.clone(), item]),
-                            Node::Not(_) => Node::And(vec![head.clone(), item]),
-                            Node::And(_) => Node::And(vec![head.clone(), item]),
-                            Node::Or(items) => {
-                                let mut children = Vec::new();
-                                for child in items {
-                                    children.push(Node::And(vec![head.clone(), child]));
-                                }
-                                Node::Or(children)
-                            }
-                        };
-                        new_items.push(new_node);
-                    }
-                    if new_items.len() == 1 {
-                        new_items[0].clone().flatten()
-                    } else {
-                        Node::And(new_items).flatten()
-                    }
-                }
-            }
-            Node::Or(items) => {
-                if items.len() < 2 {
-                    self.clone()
-                } else {
-                    // A || (B&&C) || ~Q ... || Z=>
-                    // (A&&B || A&&C) || (A || ~Q) .. || (A||Z) =>
-                    let mut or_items = items.clone();
-                    let head = or_items.pop().unwrap();
-                    let mut new_items = Vec::new();
-                    for item in or_items {
-                        let new_node = match item.clone() {
-                            Node::Literal(_) => Node::And(vec![head.clone(), item]),
-                            Node::Not(_) => Node::And(vec![head.clone(), item]),
-                            Node::Or(_) => Node::And(vec![head.clone(), item]),
-                            Node::And(items) => {
-                                let mut children = Vec::new();
-                                for child in items.into_iter() {
-                                    children.push(Node::Or(vec![head.clone(), child]));
-                                }
-                                Node::And(children)
-                            }
-                        };
-                        new_items.push(new_node);
-                    }
-                    if new_items.len() == 1 {
-                        new_items[0].clone().flatten()
-                    } else {
-                        Node::Or(new_items).flatten()
-                    }
-                }
-            }
+            Node::Or(items) => Node::Not(Box::new(Node::And(wrap_child(items)))),
+            Node::And(items) => Node::Not(Box::new(Node::Or(wrap_child(items)))),
+            Node::Not(child) => match child.deref() {
+                Node::Literal(_) => self.clone(),
+                Node::And(items) => Node::Or(wrap_child(items)),
+                Node::Or(items) => Node::And(wrap_child(items)),
+                Node::Not(_) => self.clone(),
+            },
         }
     }
 
@@ -260,34 +322,94 @@ impl Node {
     }
 }
 
+/// TreeBuilder helps build Node
 pub struct TreeBuilder {
     vars: Variables,
 }
 
 impl TreeBuilder {
+    /// create instance TreeBuilder
     pub fn new(vars: Variables) -> Self {
         Self { vars }
     }
 
+    /// build literal node
     pub fn lit(&mut self) -> Node {
         Node::Literal(self.vars.create())
     }
 
+    /// build and node
     pub fn and(&self, items: Vec<Node>) -> Node {
-        let items = items.iter().map(|f| (*f).to_owned()).collect();
         Node::And(items)
     }
 
+    /// build 2 input and
+    pub fn and2(&self, left: Node, right: Node) -> Node {
+        Node::And(vec![left, right])
+    }
+
+    /// build 3 input and
+    pub fn and3(&self, left: Node, mid: Node, right: Node) -> Node {
+        Node::And(vec![left, mid, right])
+    }
+
+    /// build or node
     pub fn or(&self, items: Vec<Node>) -> Node {
-        let items = items.iter().map(|f| (*f).to_owned()).collect();
         Node::Or(items)
     }
 
+    /// build 2 input or
+    pub fn or2(&self, left: Node, right: Node) -> Node {
+        Node::Or(vec![left, right])
+    }
+
+    /// build 3 input or
+    pub fn or3(&self, left: Node, mid: Node, right: Node) -> Node {
+        Node::Or(vec![left, mid, right])
+    }
+
+    /// build not
     pub fn not(&self, item: Node) -> Node {
         match item {
             Node::Not(base) => base.deref().clone(),
             _ => Node::Not(Box::new(item.to_owned())),
         }
+    }
+
+    /// builds 2 input xor
+    ///
+    /// returns (left and ~right) or (~left and right)
+    pub fn xor2(&self, left: Node, right: Node) -> Node {
+        self.or2(
+            self.and2(left.clone(), self.not(right.clone())),
+            self.and2(self.not(left), right),
+        )
+    }
+
+    /// one_of( A,B,C )
+    ///
+    /// builds
+    ///
+    /// ```text
+    ///  ( ( A && ~B && ~C)
+    /// || (~A &&  B && ~C)
+    /// || (~A && ~B &&  C) )
+    /// ```
+    pub fn one_of(&mut self, nodes: Vec<Node>) -> Node {
+        let length = nodes.len();
+        let mut or_set = Vec::new();
+        for index in 0..length {
+            let mut childs = Vec::new();
+            for (i, item) in nodes.iter().enumerate().take(length) {
+                childs.push(if i == index {
+                    item.clone()
+                } else {
+                    self.not(item.clone())
+                })
+            }
+            or_set.push(Node::And(childs))
+        }
+        Node::Or(or_set)
     }
 }
 
@@ -316,7 +438,7 @@ mod tests {
         let mut b = TreeBuilder::new(Variables::new());
         let node1 = b.lit();
         let node2 = b.lit();
-        let and_node = b.and(vec![node1, node2]);
+        let and_node = b.and2(node1, node2);
         match and_node {
             Node::And(items) => {
                 assert_eq!((*items).len(), 2)
@@ -330,7 +452,7 @@ mod tests {
         let mut b = TreeBuilder::new(Variables::new());
         let node1 = b.lit();
         let node2 = b.lit();
-        let or_node = b.or(vec![node1, node2]);
+        let or_node = b.or2(node1, node2);
         match or_node {
             Node::Or(items) => {
                 assert_eq!((*items).len(), 2)
@@ -363,7 +485,7 @@ mod tests {
         let mut b = TreeBuilder::new(Variables::new());
         let lit1 = b.lit();
         let lit2 = b.lit();
-        let nested_or = b.or(vec![b.or(vec![lit1.clone()]), lit2, lit1]);
+        let nested_or = b.or3(b.or(vec![lit1.clone()]), lit2, lit1);
         let nested_or = nested_or.flatten();
         let exp = format!("{}", nested_or);
         assert_eq!(exp, "([1]||[2])");
@@ -374,32 +496,135 @@ mod tests {
         let mut b = TreeBuilder::new(Variables::new());
         let lit1 = b.lit();
         let lit2 = b.lit();
-        let nested_and = b.and(vec![b.and(vec![lit1.clone()]), lit2, lit1]);
+        let nested_and = b.and3(b.and(vec![lit1.clone()]), lit2, lit1);
         let nested_and = nested_and.flatten();
         let exp = format!("{}", nested_and);
         assert_eq!(exp, "([1]&&[2])");
     }
 
     #[test]
-    fn test_cross_product_or() {
+    fn test_apply_de_morgan_law() {
         let mut b = TreeBuilder::new(Variables::new());
         let lit1 = b.lit();
         let lit2 = b.lit();
         let lit3 = b.lit();
-        let cross = b.or(vec![b.and(vec![lit1.clone(), lit2.clone()]), lit3]);
-        let cross = cross.cross_product();
-        let exp = format!("{}", cross);
-        assert_eq!(exp, "(([2]||[3])&&([1]||[3]))");
+        let result = b.and(vec![lit1.clone()]).apply_de_morgan_law().flatten();
+        assert_eq!(format!("{}", result), "!((!([1])))");
+        let result = b
+            .and2(lit1.clone(), lit2.clone())
+            .apply_de_morgan_law()
+            .flatten();
+        assert_eq!(format!("{}", result), "!((!([1])||!([2])))");
+        let result = b
+            .and3(lit1.clone(), lit2.clone(), lit3.clone())
+            .apply_de_morgan_law()
+            .flatten();
+        assert_eq!(format!("{}", result), "!((!([1])||!([2])||!([3])))");
+
+        let result = b
+            .not(b.and(vec![lit1.clone()]))
+            .apply_de_morgan_law()
+            .flatten();
+        assert_eq!(format!("{}", result), "(!([1]))");
+        let result = b
+            .not(b.and2(lit1.clone(), lit2.clone()))
+            .apply_de_morgan_law()
+            .flatten();
+        assert_eq!(format!("{}", result), "(!([1])||!([2]))");
+        let result = b
+            .not(b.and3(lit1.clone(), lit2.clone(), lit3.clone()))
+            .apply_de_morgan_law()
+            .flatten();
+        assert_eq!(format!("{}", result), "(!([1])||!([2])||!([3]))");
+
+        let result = b.or(vec![lit1.clone()]).apply_de_morgan_law().flatten();
+        assert_eq!(format!("{}", result), "!((!([1])))");
+        let result = b
+            .or2(lit1.clone(), lit2.clone())
+            .apply_de_morgan_law()
+            .flatten();
+        assert_eq!(format!("{}", result), "!((!([1])&&!([2])))");
+        let result = b
+            .or3(lit1.clone(), lit2.clone(), lit3.clone())
+            .apply_de_morgan_law()
+            .flatten();
+        assert_eq!(format!("{}", result), "!((!([1])&&!([2])&&!([3])))");
+
+        let result = b
+            .not(b.or(vec![lit1.clone()]))
+            .apply_de_morgan_law()
+            .flatten();
+        assert_eq!(format!("{}", result), "(!([1]))");
+        let result = b
+            .not(b.or2(lit1.clone(), lit2.clone()))
+            .apply_de_morgan_law()
+            .flatten();
+        assert_eq!(format!("{}", result), "(!([1])&&!([2]))");
+        let result = b
+            .not(b.or3(lit1.clone(), lit2.clone(), lit3.clone()))
+            .apply_de_morgan_law()
+            .flatten();
+        assert_eq!(format!("{}", result), "(!([1])&&!([2])&&!([3]))");
+
+        let result = b
+            .and2(lit1.clone(), b.not(lit2.clone()))
+            .apply_de_morgan_law()
+            .flatten();
+        assert_eq!(format!("{}", result), "!((!([1])||[2]))");
+        let result = b
+            .or2(lit1.clone(), b.not(lit2.clone()))
+            .apply_de_morgan_law()
+            .flatten();
+        assert_eq!(format!("{}", result), "!((!([1])&&[2]))");
     }
+
     #[test]
-    fn test_cross_product_and() {
+    fn test_build_cnf() {
         let mut b = TreeBuilder::new(Variables::new());
         let lit1 = b.lit();
         let lit2 = b.lit();
         let lit3 = b.lit();
-        let cross = b.and(vec![b.or(vec![lit1.clone(), lit2.clone()]), lit3]);
-        let cross = cross.cross_product();
-        let exp = format!("{}", cross);
-        assert_eq!(exp, "(([2]&&[3])||([1]&&[3]))");
+        let lit4 = b.lit();
+        let lit5 = b.lit();
+
+        let result = b
+            .and2(b.or2(lit1.clone(), lit2.clone()), lit3.clone())
+            .to_or_and_not_form()
+            .flatten();
+        assert_eq!(format!("{}", result), "(([2]&&[3])||([1]&&[3]))");
+        let result = b
+            .and2(
+                b.or2(lit1.clone(), lit2.clone()),
+                b.or2(lit3.clone(), lit4.clone()),
+            )
+            .to_or_and_not_form()
+            .flatten();
+        assert_eq!(
+            format!("{}", result),
+            "(([2]&&[4])||([2]&&[3])||([1]&&[4])||([1]&&[3]))"
+        );
+        let result = b
+            .and2(
+                b.or2(lit1.clone(), lit2.clone()),
+                b.or3(lit3.clone(), lit4.clone(), lit5.clone()),
+            )
+            .to_or_and_not_form()
+            .flatten();
+        assert_eq!(
+            format!("{}", result),
+            "(([2]&&[5])||([2]&&[4])||([2]&&[3])||([1]&&[5])||([1]&&[4])||([1]&&[3]))"
+        );
+
+        let result = b
+            .and2(
+                b.not(b.or2(lit1.clone(), lit2.clone())),
+                b.or3(lit3.clone(), lit4.clone(), lit5.clone()),
+            )
+            .to_or_and_not_form()
+            .flatten();
+        assert_eq!(
+            format!("{}", result),
+            "(([5]&&!([1])&&!([2]))||([4]&&!([1])&&!([2]))||([3]&&!([1])&&!([2])))"
+        );
     }
 }
