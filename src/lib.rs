@@ -40,7 +40,7 @@
 mod boolean_expression;
 mod solver;
 
-pub use boolean_expression::{Node, TreeBuilder};
+pub use boolean_expression::*;
 pub use solver::{Literal, Variable, Variables};
 
 /// SAT solve and returns one result
