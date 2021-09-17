@@ -1,2 +1,6 @@
 /target
 Cargo.lock
+default.profraw
+flamegraph.svg
+perf.data
+perf.data*
