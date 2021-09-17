@@ -1,12 +1,17 @@
-use std::{cmp::Ordering, collections::HashMap, fmt::Display, ops::Deref};
-
-use crate::{solver::Variable, Literal};
+use crate::{solver::Variable, Literal, Variables};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    fmt::Display,
+    ops::Deref,
+};
+use tracing::trace;
 
 /// boolean expression node
 #[derive(Debug, PartialEq, Clone, Eq)]
 pub enum Node {
     /// Literal, references SAT variable
-    Literal(Variable),
+    Literal(Variable, bool),
     /// And, true if all Node is true
     And(Vec<Node>),
     /// Or, true if any Node is true
@@ -28,7 +33,12 @@ impl Ord for Node {
 impl PartialOrd for Node {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self, other) {
-            (Node::Literal(v1), Node::Literal(v2)) => v1.index().partial_cmp(&v2.index()),
+            (Node::Literal(v1, d1), Node::Literal(v2, d2)) => {
+                match v1.index().partial_cmp(&v2.index()) {
+                    Some(Ordering::Equal) => d1.partial_cmp(d2),
+                    r => r,
+                }
+            }
             (Node::And(items1), Node::And(items2)) => {
                 let items1 = items1.deref();
                 let items2 = items2.deref();
@@ -72,33 +82,33 @@ impl PartialOrd for Node {
                 }
             }
             (Node::Not(item1), Node::Not(item2)) => item1.deref().partial_cmp(item2.deref()),
-            (Node::Literal(_), Node::And(_)) => Some(Ordering::Less),
-            (Node::Literal(_), Node::Or(_)) => Some(Ordering::Less),
-            (Node::Literal(_), Node::Not(_)) => Some(Ordering::Less),
-            (Node::And(_), Node::Literal(_)) => Some(Ordering::Greater),
+            (Node::Literal(_, _), Node::And(_)) => Some(Ordering::Less),
+            (Node::Literal(_, _), Node::Or(_)) => Some(Ordering::Less),
+            (Node::Literal(_, _), Node::Not(_)) => Some(Ordering::Less),
+            (Node::And(_), Node::Literal(_, _)) => Some(Ordering::Greater),
             (Node::And(_), Node::Or(_)) => Some(Ordering::Less),
             (Node::And(_), Node::Not(_)) => Some(Ordering::Greater),
-            (Node::Or(_), Node::Literal(_)) => Some(Ordering::Less),
+            (Node::Or(_), Node::Literal(_, _)) => Some(Ordering::Less),
             (Node::Or(_), Node::And(_)) => Some(Ordering::Less),
             (Node::Or(_), Node::Not(_)) => Some(Ordering::Greater),
-            (Node::Not(_), Node::Literal(_)) => Some(Ordering::Less),
+            (Node::Not(_), Node::Literal(_, _)) => Some(Ordering::Less),
             (Node::Not(_), Node::And(_)) => Some(Ordering::Less),
             (Node::Not(_), Node::Or(_)) => Some(Ordering::Less),
-            (Node::Literal(_), Node::False) => Some(Ordering::Less),
-            (Node::Literal(_), Node::True) => Some(Ordering::Less),
+            (Node::Literal(_, _), Node::False) => Some(Ordering::Less),
+            (Node::Literal(_, _), Node::True) => Some(Ordering::Less),
             (Node::And(_), Node::False) => Some(Ordering::Less),
             (Node::And(_), Node::True) => Some(Ordering::Less),
             (Node::Or(_), Node::False) => Some(Ordering::Less),
             (Node::Or(_), Node::True) => Some(Ordering::Less),
             (Node::Not(_), Node::False) => Some(Ordering::Less),
             (Node::Not(_), Node::True) => Some(Ordering::Less),
-            (Node::False, Node::Literal(_)) => Some(Ordering::Greater),
+            (Node::False, Node::Literal(_, _)) => Some(Ordering::Greater),
             (Node::False, Node::And(_)) => Some(Ordering::Greater),
             (Node::False, Node::Or(_)) => Some(Ordering::Greater),
             (Node::False, Node::Not(_)) => Some(Ordering::Greater),
             (Node::False, Node::False) => Some(Ordering::Equal),
             (Node::False, Node::True) => Some(Ordering::Less),
-            (Node::True, Node::Literal(_)) => Some(Ordering::Greater),
+            (Node::True, Node::Literal(_, _)) => Some(Ordering::Greater),
             (Node::True, Node::And(_)) => Some(Ordering::Greater),
             (Node::True, Node::Or(_)) => Some(Ordering::Greater),
             (Node::True, Node::Not(_)) => Some(Ordering::Greater),
@@ -111,9 +121,10 @@ impl PartialOrd for Node {
 impl Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self {
-            Node::Literal(v) => {
-                write!(f, "[{}]", v.index())?;
-            }
+            Node::Literal(v, d) => match d {
+                true => write!(f, "[{}]", v.index())?,
+                false => write!(f, "[~{}]", v.index())?,
+            },
             Node::And(items) => {
                 let mut first = true;
                 write!(f, "(")?;
@@ -154,15 +165,30 @@ impl Display for Node {
 
 impl Node {
     /// convert Node to Solver input (Conjective Normal Foam)
-    pub fn to_cnf(&self) -> Vec<Vec<Literal>> {
+    #[tracing::instrument]
+    pub fn to_cnf(&self, vars: &mut Variables) -> Vec<Vec<Literal>> {
+        trace!("to_cnf");
+
         // converts Literal node or Not Literal node to solver Literal
         fn to_literal(node: Node) -> Literal {
             match node {
                 Node::And(_) => panic!("to_literal on AND"),
                 Node::Or(_) => panic!("to_literal on OR"),
-                Node::Literal(lit) => lit.t(),
+                Node::Literal(lit, v) => {
+                    if v {
+                        lit.t()
+                    } else {
+                        lit.f()
+                    }
+                }
                 Node::Not(boxed) => match *boxed {
-                    Node::Literal(lit) => lit.f(),
+                    Node::Literal(lit, v) => {
+                        if v {
+                            lit.f()
+                        } else {
+                            lit.t()
+                        }
+                    }
                     _ => panic!("unexpected node format {:?}", boxed),
                 },
                 Node::True => {
@@ -184,13 +210,13 @@ impl Node {
                         match item {
                             Node::And(_) => panic!("to_literals on AND content"),
                             Node::Or(_) => result.append(&mut to_literals(item)),
-                            Node::Literal(_) | Node::Not(_) => result.push(to_literal(item)),
+                            Node::Literal(_, _) | Node::Not(_) => result.push(to_literal(item)),
                             Node::True | Node::False => panic!("to_literals on TRUE/FALSE"),
                         }
                     }
                     result
                 }
-                Node::Literal(_) | Node::Not(_) => {
+                Node::Literal(_, _) | Node::Not(_) => {
                     vec![to_literal(node)]
                 }
                 Node::True | Node::False => panic!("to_literals on TRUE/FALSE"),
@@ -207,25 +233,38 @@ impl Node {
                     }
                     result
                 }
-                Node::Or(_) | Node::Literal(_) | Node::Not(_) => vec![to_literals(node)],
+                Node::Or(_) | Node::Literal(_, _) | Node::Not(_) => vec![to_literals(node)],
                 Node::True | Node::False => panic!("collect_literals on TRUE/FALSE"),
             }
         }
 
-        let aon = self.to_and_or_not_form();
+        let aon = self.to_and_or_not_form(vars);
         collect_literals(aon)
     }
 
     /// convert Node to Disjunctive normal form
+    #[tracing::instrument]
     pub fn to_dnf(&self) -> Vec<Vec<Literal>> {
         // converts Literal node or Not Literal node to solver Literal
         fn to_literal(node: Node) -> Literal {
             match node {
                 Node::And(_) => panic!("to_literal on AND"),
                 Node::Or(_) => panic!("to_literal on OR"),
-                Node::Literal(lit) => lit.t(),
+                Node::Literal(lit, v) => {
+                    if v {
+                        lit.t()
+                    } else {
+                        lit.f()
+                    }
+                }
                 Node::Not(boxed) => match *boxed {
-                    Node::Literal(lit) => lit.f(),
+                    Node::Literal(lit, v) => {
+                        if v {
+                            lit.f()
+                        } else {
+                            lit.t()
+                        }
+                    }
                     _ => panic!("unexpected node format {:?}", boxed),
                 },
                 Node::True | Node::False => panic!("to_literal on TRUE/FALSE"),
@@ -242,13 +281,13 @@ impl Node {
                         match item {
                             Node::Or(_) => panic!("to_literals on OR content"),
                             Node::And(_) => result.append(&mut to_literals(item)),
-                            Node::Literal(_) | Node::Not(_) => result.push(to_literal(item)),
+                            Node::Literal(_, _) | Node::Not(_) => result.push(to_literal(item)),
                             Node::True | Node::False => panic!("to_literals on TRUE/FALSE"),
                         }
                     }
                     result
                 }
-                Node::Literal(_) | Node::Not(_) => {
+                Node::Literal(_, _) | Node::Not(_) => {
                     vec![to_literal(node)]
                 }
                 Node::True | Node::False => panic!("to_literals on TRUE/FALSE"),
@@ -265,7 +304,7 @@ impl Node {
                     }
                     result
                 }
-                Node::And(_) | Node::Literal(_) | Node::Not(_) => vec![to_literals(node)],
+                Node::And(_) | Node::Literal(_, _) | Node::Not(_) => vec![to_literals(node)],
                 Node::True | Node::False => panic!("collect_literals on TRUE/FALSE"),
             }
         }
@@ -274,23 +313,53 @@ impl Node {
         collect_literals(oan)
     }
 
+    #[tracing::instrument]
     fn is_false(&self) -> bool {
         matches!(self, Node::False)
     }
 
+    #[tracing::instrument]
     fn is_true(&self) -> bool {
         matches!(self, Node::True)
     }
 
     // return v from Literal(v) or Not(Liteal(v))
+    #[tracing::instrument]
     fn index(&self) -> Option<u32> {
         match self {
-            Node::Literal(v) => Some(v.index()),
+            Node::Literal(v, _) => Some(v.index()),
             Node::Not(child) => match child.deref() {
-                Node::Literal(v) => Some(v.index()),
+                Node::Literal(v, _) => Some(v.index()),
                 _ => None,
             },
             _ => None,
+        }
+    }
+
+    /// referenced valiables under self
+    pub fn reference_variables(&self) -> HashSet<Variable> {
+        match self {
+            Node::Literal(v, _) => {
+                let mut result = HashSet::new();
+                result.insert(*v);
+                result
+            }
+            Node::And(items) => {
+                let mut result = HashSet::new();
+                for item in items {
+                    result.extend(item.reference_variables())
+                }
+                result
+            }
+            Node::Or(items) => {
+                let mut result = HashSet::new();
+                for item in items {
+                    result.extend(item.reference_variables())
+                }
+                result
+            }
+            Node::Not(x) => x.reference_variables(),
+            Node::False | Node::True => HashSet::new(),
         }
     }
 
@@ -302,13 +371,14 @@ impl Node {
     /// when A is subset of B
     /// B contains all of A
     ///
+    #[tracing::instrument]
     pub fn is_subset_of(&self, other: &Node) -> bool {
-        match (self, other) {
+        let result = match (self, other) {
             // is_subset( A,A ) then Same set, not subset,
             // is_subset( A,B ) then other set, not subset
-            (Node::Literal(_), Node::Literal(_)) => false,
-            (Node::Literal(_), Node::And(_)) => false,
-            (Node::Literal(_), Node::Or(or_items)) => {
+            (Node::Literal(_, _), Node::Literal(_, _)) => false,
+            (Node::Literal(_, _), Node::And(_)) => false,
+            (Node::Literal(_, _), Node::Or(or_items)) => {
                 for item in or_items {
                     if item == self {
                         return true;
@@ -316,25 +386,18 @@ impl Node {
                 }
                 false
             }
-            (Node::Literal(_), Node::Not(_)) => {
+            (Node::Literal(_, _), Node::Not(_)) => {
                 false // TODO: verify
             }
-            (Node::Literal(_), Node::False) => false,
-            (Node::Literal(_), Node::True) => true,
-            (Node::And(and_items), Node::Literal(_)) => {
+            (Node::Literal(_, _), Node::False) => false,
+            (Node::Literal(_, _), Node::True) => true,
+            (Node::And(and_items), Node::Literal(_, _)) => {
                 if and_items.contains(other) {
                     return true;
                 }
                 and_items.iter().any(|a| a.is_subset_of(other))
             }
-            (Node::And(left), Node::And(right)) => {
-                for right_item in right {
-                    if !left.contains(right_item) {
-                        return false;
-                    }
-                }
-                true
-            }
+            (Node::And(left), Node::And(right)) => !right.iter().any(|r| !left.contains(r)),
             (Node::And(and_items), Node::Or(or_items)) => {
                 if and_items.iter().all(|a| or_items.contains(a)) {
                     return true;
@@ -350,7 +413,7 @@ impl Node {
             (Node::And(and_items), Node::Not(_)) => and_items.contains(other),
             (Node::And(_), Node::False) => false,
             (Node::And(_), Node::True) => true,
-            (Node::Or(_), Node::Literal(_)) => false,
+            (Node::Or(_), Node::Literal(_, _)) => false,
             (Node::Or(or_items), Node::And(_)) => or_items.iter().all(|o| o.is_subset_of(other)),
             (Node::Or(left), Node::Or(right)) => {
                 for item in left {
@@ -363,20 +426,13 @@ impl Node {
             (Node::Or(or_items), Node::Not(_)) => or_items.iter().all(|o| o.is_subset_of(other)),
             (Node::Or(_), Node::False) => false,
             (Node::Or(_), Node::True) => true,
-            (Node::Not(_), Node::Literal(_)) => {
+            (Node::Not(_), Node::Literal(_, _)) => {
                 false // TODO: verify
             }
             (Node::Not(_), Node::And(_)) => {
                 false // TODO: verify
             }
-            (Node::Not(_), Node::Or(or_items)) => {
-                for item in or_items {
-                    if item == self {
-                        return true;
-                    }
-                }
-                false
-            }
+            (Node::Not(_), Node::Or(or_items)) => or_items.iter().any(|item| item == self),
             (Node::Not(a), Node::Not(b)) => {
                 //  if b is subset of a, outer a contains outer b
                 b.is_subset_of(a)
@@ -385,32 +441,76 @@ impl Node {
             (Node::Not(_), Node::True) => true,
             (Node::False, _) => true, // false is subset of everything
             (Node::True, _) => false, // true is superset of everything
+        };
+
+        result
+    }
+
+    /// return Node when variable is value
+    pub fn apply_context(&self, var: &Variable, value: bool) -> Node {
+        match self {
+            Node::Literal(v, lv) => {
+                if v.index() == var.index() {
+                    match (lv, value) {
+                        (true, true) => Node::True,
+                        (true, false) => Node::False,
+                        (false, true) => Node::False,
+                        (false, false) => Node::True,
+                    }
+                } else {
+                    self.clone()
+                }
+            }
+            Node::And(items) => {
+                let items: Vec<Node> = items.iter().map(|n| n.apply_context(var, value)).collect();
+                Node::and(items.iter().collect())
+            }
+            Node::Or(items) => {
+                let items: Vec<Node> = items.iter().map(|n| n.apply_context(var, value)).collect();
+                Node::or(items.iter().collect())
+            }
+            Node::Not(item) => Node::not(&item.apply_context(var, value)),
+            Node::True | Node::False => self.clone(),
+        }
+    }
+
+    /// enumerate context
+    pub fn contexts(&self) -> HashSet<(Variable, bool)> {
+        match self {
+            Node::Literal(v, lv) => {
+                let mut result = HashSet::new();
+                result.insert((*v, *lv));
+                result
+            }
+            Node::And(items) => {
+                let mut result = HashSet::new();
+                for item in items {
+                    result.extend(item.contexts())
+                }
+                result
+            }
+            Node::Or(items) => {
+                let mut result = HashSet::new();
+                for item in items {
+                    result.extend(item.contexts())
+                }
+                result
+            }
+            Node::Not(item) => {
+                let inner = item.contexts();
+                let mut result = HashSet::new();
+                for item in inner {
+                    result.insert((item.0, !item.1));
+                }
+                result
+            }
+            Node::True | Node::False => HashSet::new(),
         }
     }
 
     /// create and Node
+    #[tracing::instrument]
     pub fn and(items: Vec<&Node>) -> Node {
-        fn pickup_most_subset(items: Vec<Node>) -> Vec<Node> {
-            let mut result = Vec::new();
-            for ix1 in 0..items.len() {
-                let left = &items[ix1];
-
-                let mut subset_found = false;
-                for (ix2, right) in items.iter().enumerate() {
-                    if ix1 == ix2 {
-                        continue;
-                    }
-                    if right.is_subset_of(left) {
-                        subset_found = true;
-                        break;
-                    }
-                }
-                if !subset_found {
-                    result.push(left.clone())
-                }
-            }
-            result
-        }
         let mut items: Vec<Node> = items.into_iter().cloned().collect();
         let mut childs = Vec::new();
         while let Some(item) = items.pop() {
@@ -436,8 +536,10 @@ impl Node {
             if let Some(index) = item.index() {
                 let value = simple_nodes.entry(index).or_insert(0);
                 *value |= match item {
-                    Node::Literal(_) => 0x01,
-                    Node::Not(_) => 0x02,
+                    Node::Literal(_, v) => match v {
+                        true => 0x01,
+                        false => 0x02,
+                    },
                     _ => 0x00,
                 }
             }
@@ -448,7 +550,6 @@ impl Node {
                 return Node::False;
             }
         }
-        let items = pickup_most_subset(items);
         if items.len() == 1 {
             items[0].clone()
         } else {
@@ -457,28 +558,8 @@ impl Node {
     }
 
     /// create or Node
+    #[tracing::instrument]
     pub fn or(items: Vec<&Node>) -> Node {
-        fn remove_subset(items: Vec<Node>) -> Vec<Node> {
-            let mut result = Vec::new();
-            for ix1 in 0..items.len() {
-                let left = &items[ix1];
-
-                let mut subset_found = false;
-                for (ix2, right) in items.iter().enumerate() {
-                    if ix1 == ix2 {
-                        continue;
-                    }
-                    if left.is_subset_of(right) {
-                        subset_found = true;
-                        break;
-                    }
-                }
-                if !subset_found {
-                    result.push(left.clone())
-                }
-            }
-            result
-        }
         let mut items: Vec<Node> = items.into_iter().cloned().collect();
         let mut childs = Vec::new();
         while let Some(item) = items.pop() {
@@ -504,7 +585,10 @@ impl Node {
             if let Some(index) = item.index() {
                 let value = simple_nodes.entry(index).or_insert(0);
                 *value |= match item {
-                    Node::Literal(_) => 0x01,
+                    Node::Literal(_, v) => match v {
+                        true => 0x01,
+                        false => 0x02,
+                    },
                     Node::Not(_) => 0x02,
                     _ => 0x00,
                 }
@@ -515,7 +599,7 @@ impl Node {
                 return Node::True;
             }
         }
-        let items = remove_subset(items);
+        // let items = remove_subset(items);
         if items.len() == 1 {
             items[0].clone()
         } else {
@@ -524,9 +608,10 @@ impl Node {
     }
 
     // Node is And or contains and
+    #[tracing::instrument]
     fn have_and(&self) -> bool {
         match self {
-            Node::Literal(_) => false,
+            Node::Literal(_, _) => false,
             Node::And(_) => true,
             Node::Or(items) => items.iter().any(|n| n.have_and()),
             Node::Not(item) => item.deref().have_and(),
@@ -534,19 +619,39 @@ impl Node {
         }
     }
 
+    #[tracing::instrument]
+    fn two_or_to_and(switch_variable: Variable, left: Vec<Node>, right: Vec<Node>) -> Node {
+        let lit = Self::lit(switch_variable);
+        let not = Self::not(&lit);
+        let mut result_item = Vec::new();
+        for left_item in left {
+            result_item.push(Node::or(vec![&left_item, &lit]));
+        }
+        for right_item in right {
+            result_item.push(Node::or(vec![&right_item, &not]));
+        }
+        Node::and(result_item.iter().collect())
+    }
+
+    #[tracing::instrument]
     fn cross_product_and_or(left: Vec<Node>, right: Vec<Node>) -> Node {
         let mut and_nodes = Vec::new();
         for left_item in &left {
             for right_item in &right {
-                and_nodes.push(Node::or(vec![left_item, right_item]))
+                let item = Node::or(vec![left_item, right_item]);
+                match item {
+                    Node::True => {}
+                    _ => and_nodes.push(item),
+                }
             }
         }
         Node::and(and_nodes.iter().collect())
     }
 
     /// convert node ot AND (OR( NOT( Literal )))
-    pub fn to_and_or_not_form(&self) -> Self {
-        fn create_and_from_or(or_node: Node) -> Node {
+    #[tracing::instrument]
+    pub fn to_and_or_not_form(&self, vars: &mut Variables) -> Self {
+        fn create_and_from_or(vars: &mut Variables, or_node: Node) -> Node {
             if let Node::Or(items) = or_node {
                 let mut and_nodes = Vec::new();
                 let mut other_nodes = Vec::new();
@@ -564,13 +669,16 @@ impl Node {
 
                 //    (A && B && C)
                 // || (D && E && F)
-                // => A||D && B||D && C||D
-                // && A||E && B||E && C||E
-                // && A||F && B||F && C||F
+                // => (A||Z) && (B||Z) && (C||Z)
+                // && (D||~Z) && (E||~Z) && (F||~Z)
                 while and_nodes.len() >= 2 {
                     if let Some(Node::And(left_item)) = and_nodes.pop() {
                         if let Some(Node::And(right_item)) = and_nodes.pop() {
-                            and_nodes.push(Node::cross_product_and_or(left_item, right_item))
+                            and_nodes.push(Node::two_or_to_and(
+                                vars.create(),
+                                left_item,
+                                right_item,
+                            ))
                         } else {
                             panic!("Not and!")
                         }
@@ -590,21 +698,23 @@ impl Node {
         }
 
         let result = match self {
-            Node::Literal(_) => self.clone(),
+            Node::Literal(_, _) => self.clone(),
             Node::And(items) => {
-                let new_items: Vec<Node> = items.iter().map(|n| n.to_and_or_not_form()).collect();
+                let new_items: Vec<Node> =
+                    items.iter().map(|n| n.to_and_or_not_form(vars)).collect();
                 Node::and(new_items.iter().collect())
             }
             Node::Or(items) => {
-                let new_items: Vec<Node> = items.iter().map(|n| n.to_and_or_not_form()).collect();
+                let new_items: Vec<Node> =
+                    items.iter().map(|n| n.to_and_or_not_form(vars)).collect();
                 if new_items.iter().all(|n| !n.have_and()) {
-                    Node::Or(new_items)
+                    Node::or(new_items.iter().collect())
                 } else {
                     let temp_or = Node::or(new_items.iter().collect());
                     match temp_or {
-                        Node::Literal(_) => temp_or,
+                        Node::Literal(_, _) => temp_or,
                         Node::And(_) => temp_or,
-                        Node::Or(_) => create_and_from_or(temp_or),
+                        Node::Or(_) => create_and_from_or(vars, temp_or),
                         Node::Not(_) => temp_or,
                         Node::False => temp_or,
                         Node::True => temp_or,
@@ -612,10 +722,10 @@ impl Node {
                 }
             }
             Node::Not(item) => match item.deref() {
-                Node::Literal(_) => self.clone(),
-                Node::And(_) => self.apply_de_morgan_law().to_and_or_not_form(),
-                Node::Or(_) => self.apply_de_morgan_law().to_and_or_not_form(),
-                Node::Not(x) => x.deref().to_and_or_not_form(),
+                Node::Literal(_, _) => self.clone(),
+                Node::And(_) => self.apply_de_morgan_law().to_and_or_not_form(vars),
+                Node::Or(_) => self.apply_de_morgan_law().to_and_or_not_form(vars),
+                Node::Not(x) => x.deref().to_and_or_not_form(vars),
                 Node::False => self.clone(),
                 Node::True => self.clone(),
             },
@@ -634,6 +744,7 @@ impl Node {
     /// 2. recursively apply cross-product to And node, output results Or-And
     /// 3. recursively apply flatten , marge And-And, marge Or-Or
     ///
+    #[tracing::instrument]
     pub fn to_or_and_not_form(&self) -> Self {
         fn items_from_or(or_node: Node) -> Vec<Node> {
             match or_node {
@@ -653,7 +764,7 @@ impl Node {
                     }
                     false
                 }
-                Node::Literal(_) => false,
+                Node::Literal(_, _) => false,
                 Node::Not(item) => has_or(item.deref()),
                 Node::False => false,
                 Node::True => false,
@@ -715,9 +826,11 @@ impl Node {
             let mut other_nodes = Vec::new();
             for item in children {
                 match item {
-                    Node::Literal(_) | Node::And(_) | Node::Not(_) | Node::True | Node::False => {
-                        other_nodes.push(item)
-                    }
+                    Node::Literal(_, _)
+                    | Node::And(_)
+                    | Node::Not(_)
+                    | Node::True
+                    | Node::False => other_nodes.push(item),
                     Node::Or(_) => or_nodes.push(item.flatten()),
                 }
             }
@@ -760,7 +873,7 @@ impl Node {
         }
 
         let result = match self {
-            Node::Literal(_) => self.to_owned(),
+            Node::Literal(_, _) => self.to_owned(),
             Node::And(items) => process_and_node(items),
             Node::Or(items) => {
                 let children: Vec<Node> = items
@@ -770,7 +883,7 @@ impl Node {
                 Node::or(children.iter().collect()).flatten()
             }
             Node::Not(item) => match item.deref() {
-                Node::Literal(_) => self.clone(),
+                Node::Literal(_, _) => self.clone(),
                 Node::Or(_) => self.apply_de_morgan_law().to_or_and_not_form(),
                 Node::And(_) => self.apply_de_morgan_law().to_or_and_not_form(),
                 Node::Not(not2) => not2.to_or_and_not_form(),
@@ -789,9 +902,10 @@ impl Node {
     /// - marge nested And (And)
     /// - convert Not(Not(x)) into x
     ///
+    #[tracing::instrument]
     pub fn flatten(&self) -> Self {
         let result = match self {
-            Node::Literal(_) | Node::False | Node::True => self.clone(),
+            Node::Literal(_, _) | Node::False | Node::True => self.clone(),
             Node::Or(items) => {
                 let mut child_items: Vec<Node> = (*items).iter().map(|n| n.flatten()).collect();
                 // A || ( (B&&C) || D )
@@ -800,7 +914,7 @@ impl Node {
                 while let Some(child) = child_items.pop() {
                     match child {
                         Node::Or(mut or_content) => child_items.append(&mut or_content),
-                        Node::Not(_) | Node::Literal(_) | Node::And(_) | Node::False => {
+                        Node::Not(_) | Node::Literal(_, _) | Node::And(_) | Node::False => {
                             or_items.push(child)
                         }
                         Node::True => return Node::True,
@@ -814,7 +928,7 @@ impl Node {
                 while let Some(child) = child_items.pop() {
                     match child {
                         Node::And(mut and_content) => child_items.append(&mut and_content),
-                        Node::Not(_) | Node::Literal(_) | Node::Or(_) | Node::True => {
+                        Node::Not(_) | Node::Literal(_, _) | Node::Or(_) | Node::True => {
                             and_items.push(child.clone())
                         }
                         Node::False => return Node::False,
@@ -823,7 +937,7 @@ impl Node {
                 Node::and(and_items.iter().collect())
             }
             Node::Not(child) => match child.deref() {
-                Node::Literal(_) | Node::And(_) | Node::Or(_) => self.clone(),
+                Node::Literal(_, _) | Node::And(_) | Node::Or(_) => self.clone(),
                 Node::Not(item) => item.deref().clone(),
                 Node::False => Node::True,
                 Node::True => Node::False,
@@ -832,28 +946,21 @@ impl Node {
         result
     }
 
+    #[tracing::instrument]
     fn apply_de_morgan_law(&self) -> Self {
-        fn wrap_not(child: &Node) -> Node {
-            if let Node::Not(inner) = child {
-                inner.deref().to_owned()
-            } else {
-                Node::Not(Box::new(child.to_owned()))
-            }
-        }
-
         fn wrap_child(items: &[Node]) -> Vec<Node> {
-            (*items).iter().map(|f| wrap_not(f)).collect()
+            (*items).iter().map(|f| Node::not(f)).collect()
         }
 
         match self {
-            Node::Literal(_) => self.clone(),
+            Node::Literal(_, _) => self.clone(),
             Node::Or(items) => {
                 let and_items = wrap_child(items);
-                Node::Not(Box::new(Node::and(and_items.iter().collect())))
+                Node::not(&Node::and(and_items.iter().collect()))
             }
-            Node::And(items) => Node::Not(Box::new(Node::or(wrap_child(items).iter().collect()))),
+            Node::And(items) => Node::not(&Node::or(wrap_child(items).iter().collect())),
             Node::Not(child) => match child.deref() {
-                Node::Literal(_) => self.clone(),
+                Node::Literal(_, _) => self.clone(),
                 Node::And(items) => Node::Or(wrap_child(items)),
                 Node::Or(items) => {
                     let and_items = wrap_child(items);
@@ -869,13 +976,18 @@ impl Node {
     }
 
     /// create literal
+    #[tracing::instrument]
     pub fn lit(variable: Variable) -> Self {
-        Node::Literal(variable)
+        Node::Literal(variable, true)
     }
 
     /// create not
+    #[tracing::instrument]
     pub fn not(item: &Node) -> Self {
         match item {
+            Node::Literal(v, d) => Node::Literal(*v, !d),
+            Node::True => Node::False,
+            Node::False => Node::True,
             Node::Not(base) => base.deref().clone(),
             _ => Node::Not(Box::new(item.to_owned())),
         }
@@ -884,6 +996,7 @@ impl Node {
     /// builds 2 input xor
     ///
     /// returns (left and ~right) or (~left and right)
+    #[tracing::instrument]
     pub fn xor2(left: &Node, right: &Node) -> Node {
         Self::or(vec![
             &Self::and(vec![left, &Self::not(right)]),
@@ -900,6 +1013,7 @@ impl Node {
     /// || (~A &&  B && ~C)
     /// || (~A && ~B &&  C) )
     /// ```
+    #[tracing::instrument]
     pub fn one_of(nodes: Vec<Node>) -> Node {
         if nodes.len() == 1 {
             return nodes[0].clone();
@@ -998,7 +1112,6 @@ pub fn xor2(left: &Node, right: &Node) -> Node {
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Deref;
     use test_case::test_case;
 
     use crate::{
@@ -1049,7 +1162,7 @@ mod tests {
         let mut vars = Variables::new();
         let node = lit(vars.create());
         match node {
-            Node::Literal(v) => {
+            Node::Literal(v, _) => {
                 assert_eq!(v.index(), 1)
             }
             _ => panic!("BAD NODE {:?}", node),
@@ -1090,15 +1203,18 @@ mod tests {
         let node1 = lit(vars.create());
         let not_node = not(&node1);
         match not_node {
-            Node::Not(ref item) => match item.deref() {
-                Node::Literal(l) => assert_eq!(l.index(), 1),
-                _ => panic!("BAD Literal {:?}", item),
-            },
+            Node::Literal(l, d) => {
+                assert_eq!(l.index(), 1);
+                assert_eq!(d, false);
+            }
             _ => panic!("BAD NODE {:?}", not_node),
         }
         let not2_node = not(&not_node);
         match not2_node {
-            Node::Literal(l) => assert_eq!(l.index(), 1),
+            Node::Literal(l, d) => {
+                assert_eq!(l.index(), 1);
+                assert_eq!(d, true)
+            }
             _ => panic!("BAD NODE {:?}", not2_node),
         }
     }
@@ -1138,39 +1254,39 @@ mod tests {
         let result = and(vec![&lit1]).apply_de_morgan_law().flatten();
         assert_eq!(format!("{}", result), "[1]");
         let result = and2(&lit1, &lit2).apply_de_morgan_law().flatten();
-        assert_eq!(format!("{}", result), "!((!([1])||!([2])))");
+        assert_eq!(format!("{}", result), "!(([~1]||[~2]))");
         let result = and3(&lit1, &lit2, &lit3).apply_de_morgan_law().flatten();
-        assert_eq!(format!("{}", result), "!((!([1])||!([2])||!([3])))");
+        assert_eq!(format!("{}", result), "!(([~1]||[~2]||[~3]))");
 
         let result = not(&and(vec![&lit1])).apply_de_morgan_law().flatten();
-        assert_eq!(format!("{}", result), "!([1])");
+        assert_eq!(format!("{}", result), "[~1]");
         let result = not(&and2(&lit1, &lit2)).apply_de_morgan_law().flatten();
-        assert_eq!(format!("{}", result), "(!([1])||!([2]))");
+        assert_eq!(format!("{}", result), "([~1]||[~2])");
         let result = not(&and3(&lit1, &lit2, &lit3))
             .apply_de_morgan_law()
             .flatten();
-        assert_eq!(format!("{}", result), "(!([1])||!([2])||!([3]))");
+        assert_eq!(format!("{}", result), "([~1]||[~2]||[~3])");
 
         let result = or(vec![&lit1]).apply_de_morgan_law().flatten();
         assert_eq!(format!("{}", result), "[1]");
         let result = or2(&lit1, &lit2).apply_de_morgan_law().flatten();
-        assert_eq!(format!("{}", result), "!((!([1])&&!([2])))");
+        assert_eq!(format!("{}", result), "!(([~1]&&[~2]))");
         let result = or3(&lit1, &lit2, &lit3).apply_de_morgan_law().flatten();
-        assert_eq!(format!("{}", result), "!((!([1])&&!([2])&&!([3])))");
+        assert_eq!(format!("{}", result), "!(([~1]&&[~2]&&[~3]))");
 
         let result = not(&or(vec![&lit1])).apply_de_morgan_law().flatten();
-        assert_eq!(format!("{}", result), "!([1])");
+        assert_eq!(format!("{}", result), "[~1]");
         let result = not(&or2(&lit1, &lit2)).apply_de_morgan_law().flatten();
-        assert_eq!(format!("{}", result), "(!([1])&&!([2]))");
+        assert_eq!(format!("{}", result), "([~1]&&[~2])");
         let result = not(&or3(&lit1, &lit2, &lit3))
             .apply_de_morgan_law()
             .flatten();
-        assert_eq!(format!("{}", result), "(!([1])&&!([2])&&!([3]))");
+        assert_eq!(format!("{}", result), "([~1]&&[~2]&&[~3])");
 
         let result = and2(&lit1, &not(&lit2)).apply_de_morgan_law().flatten();
-        assert_eq!(format!("{}", result), "!((!([1])||[2]))");
+        assert_eq!(format!("{}", result), "!(([~1]||[2]))");
         let result = or2(&lit1, &not(&lit2)).apply_de_morgan_law().flatten();
-        assert_eq!(format!("{}", result), "!((!([1])&&[2]))");
+        assert_eq!(format!("{}", result), "!(([~1]&&[2]))");
     }
 
     #[test]
@@ -1206,7 +1322,7 @@ mod tests {
             .flatten();
         assert_eq!(
             format!("{}", result),
-            "(([3]&&!([1])&&!([2]))||([4]&&!([1])&&!([2]))||([5]&&!([1])&&!([2])))"
+            "(([~1]&&[~2]&&[3])||([~1]&&[~2]&&[4])||([~1]&&[~2]&&[5]))"
         );
     }
 
@@ -1298,5 +1414,18 @@ mod tests {
         assert_eq!(Node::True.is_subset_of(&Node::False), false);
 
         assert_eq!(Node::True.is_subset_of(&Node::True), false);
+    }
+
+    #[test]
+    fn test_apply_context() {
+        let mut vars = Variables::new();
+        let lit1 = lit(vars.create());
+        let var2 = vars.create();
+        let lit2 = lit(var2);
+        let lit3 = lit(vars.create());
+
+        let node = and3(&lit3, &not(&lit1), &not(&lit2));
+        let result = node.apply_context(&var2, false);
+        assert_eq!(format!("{}", result), "([~1]&&[3])");
     }
 }

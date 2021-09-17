@@ -66,6 +66,7 @@ impl Variable {
     }
 }
 
+#[derive(Debug)]
 /// SAT variable factory
 pub struct Variables {
     index: u32,

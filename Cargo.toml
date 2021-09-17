@@ -8,10 +8,22 @@ edition = "2018"
 [dependencies]
 async-recursion = "0.3.2"
 tokio = {version="1.11.0", optional=true, features=["rt","sync"] }
+tracing = "0.1.27"
+tracing-test = "0.1.0"
 
 [dev-dependencies]
+criterion = "0.3.5"
+semver = "1.0.4"
 test-case = "1.2.0"
+
+[[bench]]
+name = "one_of_expr"
+harness = false
 
 [features]
 default= ["async"]
 async=[ "tokio" ]
+
+[profile.release]
+debug = true
+
