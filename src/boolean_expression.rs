@@ -512,10 +512,6 @@ impl Node {
                     }
                 }
 
-                if and_nodes.is_empty() {
-                    todo!()
-                }
-
                 and_nodes[0].clone()
             } else {
                 panic!("Not or node!")
@@ -554,10 +550,8 @@ impl Node {
                         Node::True => temp_or,
                     }
                 };
-                if matches!(result, Node::Or(_)) {
-                    if result.have_and() {
-                        panic!("or have and!")
-                    }
+                if matches!(result, Node::Or(_)) && result.have_and() {
+                    panic!("or have and!")
                 }
                 result
             }
