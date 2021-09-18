@@ -1,10 +1,5 @@
 use crate::{solver::Variable, Literal, Variables};
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-    fmt::Display,
-    ops::Deref,
-};
+use std::{collections::HashSet, fmt::Display, ops::Deref};
 use tracing::trace;
 
 /// boolean expression node
@@ -22,100 +17,6 @@ pub enum Node {
     False,
     /// True, true is always True : example Or(X, Not(X))
     True,
-}
-
-impl Ord for Node {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap()
-    }
-}
-
-impl PartialOrd for Node {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        match (self, other) {
-            (Node::Literal(v1, d1), Node::Literal(v2, d2)) => {
-                match v1.index().partial_cmp(&v2.index()) {
-                    Some(Ordering::Equal) => d1.partial_cmp(d2),
-                    r => r,
-                }
-            }
-            (Node::And(items1), Node::And(items2)) => {
-                let items1 = items1.deref();
-                let items2 = items2.deref();
-                let comp_len = items1.len().min(items2.len());
-                for index in 0..comp_len {
-                    match items1[index].partial_cmp(&items2[index]) {
-                        Some(Ordering::Equal) => continue,
-                        Some(Ordering::Greater) => return Some(Ordering::Greater),
-                        Some(Ordering::Less) => return Some(Ordering::Less),
-                        None => return None,
-                    }
-                }
-                if items1.len() == items2.len() {
-                    return Some(Ordering::Equal);
-                }
-                if items1.len() > items2.len() {
-                    Some(Ordering::Greater)
-                } else {
-                    Some(Ordering::Less)
-                }
-            }
-            (Node::Or(items1), Node::Or(items2)) => {
-                let items1 = items1.deref();
-                let items2 = items2.deref();
-                let comp_len = items1.len().min(items2.len());
-                for index in 0..comp_len {
-                    match items1[index].partial_cmp(&items2[index]) {
-                        Some(Ordering::Equal) => continue,
-                        Some(Ordering::Greater) => return Some(Ordering::Greater),
-                        Some(Ordering::Less) => return Some(Ordering::Less),
-                        None => return None,
-                    }
-                }
-                if items1.len() == items2.len() {
-                    return Some(Ordering::Equal);
-                }
-                if items1.len() > items2.len() {
-                    Some(Ordering::Greater)
-                } else {
-                    Some(Ordering::Less)
-                }
-            }
-            (Node::Not(item1), Node::Not(item2)) => item1.deref().partial_cmp(item2.deref()),
-            (Node::Literal(_, _), Node::And(_)) => Some(Ordering::Less),
-            (Node::Literal(_, _), Node::Or(_)) => Some(Ordering::Less),
-            (Node::Literal(_, _), Node::Not(_)) => Some(Ordering::Less),
-            (Node::And(_), Node::Literal(_, _)) => Some(Ordering::Greater),
-            (Node::And(_), Node::Or(_)) => Some(Ordering::Less),
-            (Node::And(_), Node::Not(_)) => Some(Ordering::Greater),
-            (Node::Or(_), Node::Literal(_, _)) => Some(Ordering::Less),
-            (Node::Or(_), Node::And(_)) => Some(Ordering::Less),
-            (Node::Or(_), Node::Not(_)) => Some(Ordering::Greater),
-            (Node::Not(_), Node::Literal(_, _)) => Some(Ordering::Less),
-            (Node::Not(_), Node::And(_)) => Some(Ordering::Less),
-            (Node::Not(_), Node::Or(_)) => Some(Ordering::Less),
-            (Node::Literal(_, _), Node::False) => Some(Ordering::Less),
-            (Node::Literal(_, _), Node::True) => Some(Ordering::Less),
-            (Node::And(_), Node::False) => Some(Ordering::Less),
-            (Node::And(_), Node::True) => Some(Ordering::Less),
-            (Node::Or(_), Node::False) => Some(Ordering::Less),
-            (Node::Or(_), Node::True) => Some(Ordering::Less),
-            (Node::Not(_), Node::False) => Some(Ordering::Less),
-            (Node::Not(_), Node::True) => Some(Ordering::Less),
-            (Node::False, Node::Literal(_, _)) => Some(Ordering::Greater),
-            (Node::False, Node::And(_)) => Some(Ordering::Greater),
-            (Node::False, Node::Or(_)) => Some(Ordering::Greater),
-            (Node::False, Node::Not(_)) => Some(Ordering::Greater),
-            (Node::False, Node::False) => Some(Ordering::Equal),
-            (Node::False, Node::True) => Some(Ordering::Less),
-            (Node::True, Node::Literal(_, _)) => Some(Ordering::Greater),
-            (Node::True, Node::And(_)) => Some(Ordering::Greater),
-            (Node::True, Node::Or(_)) => Some(Ordering::Greater),
-            (Node::True, Node::Not(_)) => Some(Ordering::Greater),
-            (Node::True, Node::False) => Some(Ordering::Greater),
-            (Node::True, Node::True) => Some(Ordering::Equal),
-        }
-    }
 }
 
 impl Display for Node {
@@ -982,10 +883,16 @@ pub fn lit(variable: Variable) -> Node {
 ///
 /// short-cut for Node::and
 ///
-pub fn and(mut items: Vec<&Node>) -> Node {
-    items.sort();
-    items.dedup();
-    Node::and(items)
+pub fn and(items: Vec<&Node>) -> Node {
+    let mut build_items: Vec<Node> = Vec::new();
+    for item in items {
+        if build_items.contains(item) {
+            continue;
+        } else {
+            build_items.push(item.to_owned())
+        }
+    }
+    Node::and_from_owned(build_items)
 }
 
 /// create binary and node
@@ -1008,10 +915,16 @@ pub fn and3(left: &Node, mid: &Node, right: &Node) -> Node {
 ///
 /// short-cut for Node::or
 ///
-pub fn or(mut items: Vec<&Node>) -> Node {
-    items.sort();
-    items.dedup();
-    Node::or(items)
+pub fn or(items: Vec<&Node>) -> Node {
+    let mut build_items: Vec<Node> = Vec::new();
+    for item in items {
+        if build_items.contains(item) {
+            continue;
+        } else {
+            build_items.push(item.to_owned())
+        }
+    }
+    Node::or(build_items.iter().collect())
 }
 
 /// create binary or node
@@ -1365,6 +1278,6 @@ mod tests {
 
         let node = and3(&lit3, &not(&lit1), &not(&lit2));
         let result = node.apply_context(&var2, false);
-        assert_eq!(format!("{}", result), "([~1]&&[3])");
+        assert_eq!(format!("{}", result), "([3]&&[~1])");
     }
 }
