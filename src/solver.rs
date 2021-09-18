@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+/// async solvers
 #[cfg(feature = "async")]
 pub mod async_solver;
 
@@ -260,36 +261,15 @@ pub fn find_max_used_variable(input: &Cnf) -> Option<Variable> {
     max_key
 }
 
-/// repeating apply "erase one literal", and "erase pure literal"
+/// repeating apply "erase one literal"
 fn solve_partial(input: &mut Cnf) -> Option<Vec<Literal>> {
     let mut result = Vec::new();
 
-    // erase one literal / erase pure literal
-    while dpll_find_one_literal(input).is_some() || dpll_find_pure_literal(input).is_some() {
-        // can I apply "one literal rule" ?
-        while let Some(lit) = dpll_find_one_literal(input) {
-            // add lit to answer
-            result.push(lit);
-            // apply one literal rule
-            dpll_erase_one_literal(input, lit);
-            // is SAT? (SAT check is very fast , then use to shortcat)
-            if is_sat(input) {
-                return Some(result);
-            }
-        }
-        // On now, "one literal rule" can't apply.
-        // can I apply "pure literal rule"?
-        if let Some(lit) = dpll_find_pure_literal(input) {
-            // add lit to answer
-            result.push(lit);
-            // apply pure literal rule
-            dpll_erase_pure_literal(input, lit);
-            // is SAT? (SAT check is very fast , then use to shortcat)
-            if is_sat(input) {
-                return Some(result);
-            }
-        }
-        // On now, sometime Can "one literal rule" , check on while block.
+    while let Some(lit) = dpll_find_one_literal(input) {
+        // add lit to answer
+        result.push(lit);
+        // apply one literal rule
+        dpll_erase_one_literal(input, lit);
     }
     Some(result)
 }
@@ -551,25 +531,16 @@ mod tests {
         let mut vars = Variables::new();
         let s = vars.create();
         let t = vars.create();
-        let p = vars.create();
-        let u = vars.create();
 
-        let mut f = vec![
-            vec![s.t(), t.t()],
-            vec![s.f(), t.f()],
-            vec![p.t(), u.t()],
-            vec![p.f(), u.t()],
-        ];
+        let mut f = vec![vec![s.t(), t.t()], vec![s.f(), t.f()]];
         let results = solve_all(&mut f);
         assert!(!results.is_empty());
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0].len(), 3);
-        assert_eq!(results[0][0], u.t());
-        assert_eq!(results[0][1], s.t());
-        assert_eq!(results[0][2], t.t());
-        assert_eq!(results[1].len(), 3);
-        assert_eq!(results[1][0], u.t());
-        assert_eq!(results[1][1], s.f());
-        assert_eq!(results[1][2], t.f());
+        assert_eq!(results[0].len(), 2);
+        assert_eq!(results[0][0], s.t());
+        assert_eq!(results[0][1], t.t());
+        assert_eq!(results[1].len(), 2);
+        assert_eq!(results[1][0], s.f());
+        assert_eq!(results[1][1], t.f());
     }
 }

@@ -43,6 +43,7 @@ async fn solve_async_internal(
     }
 }
 
+/// async version of pico_sat::solver::solve_one
 pub async fn solve_one_async(input: Cnf) -> Option<Vec<Literal>> {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     tokio::spawn(async move {
@@ -54,6 +55,7 @@ pub async fn solve_one_async(input: Cnf) -> Option<Vec<Literal>> {
     result
 }
 
+/// async version of pico_sat::solver::solve_all
 pub async fn solve_all_async(input: Cnf) -> Vec<Vec<Literal>> {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     tokio::spawn(async move {

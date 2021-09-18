@@ -38,7 +38,11 @@
 //! ```
 
 mod boolean_expression;
-mod solver;
+
+/// module solver
+///
+/// DPLL SAT Solver and Solving step functions.
+pub mod solver;
 
 pub use boolean_expression::*;
 pub use solver::{Literal, Variable, Variables};
