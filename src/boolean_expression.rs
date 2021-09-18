@@ -1,5 +1,9 @@
 use crate::{solver::Variable, Literal, Variables};
-use std::{collections::HashSet, fmt::Display, ops::Deref};
+use std::{
+    collections::{HashSet, VecDeque},
+    fmt::Display,
+    ops::Deref,
+};
 use tracing::trace;
 
 /// boolean expression node
@@ -457,7 +461,7 @@ impl Node {
     fn two_or_to_and(switch_variable: Variable, left: Vec<Node>, right: Vec<Node>) -> Node {
         let lit = Self::lit(switch_variable);
         let not = Self::not(&lit);
-        let mut result_item = Vec::new();
+        let mut result_item = Vec::with_capacity(left.len() + right.len());
         for left_item in left {
             assert!(!left_item.have_and());
             result_item.push(Node::or(vec![&left_item, &lit]));
@@ -474,12 +478,12 @@ impl Node {
     pub fn to_and_or_not_form(&self, vars: &mut Variables) -> Self {
         fn create_and_from_or(vars: &mut Variables, or_node: Node) -> Node {
             if let Node::Or(items) = or_node {
-                let mut and_nodes = Vec::new();
+                let mut and_nodes = VecDeque::new();
                 let mut other_nodes = Vec::new();
 
                 for item in items {
                     match item {
-                        Node::And(_) => and_nodes.push(item),
+                        Node::And(_) => and_nodes.push_back(item),
                         _ => other_nodes.push(item),
                     }
                 }
@@ -493,9 +497,9 @@ impl Node {
                 // => (A||Z) && (B||Z) && (C||Z)
                 // && (D||~Z) && (E||~Z) && (F||~Z)
                 while and_nodes.len() >= 2 {
-                    if let Some(Node::And(left_item)) = and_nodes.pop() {
-                        if let Some(Node::And(right_item)) = and_nodes.pop() {
-                            and_nodes.push(Node::two_or_to_and(
+                    if let Some(Node::And(left_item)) = and_nodes.pop_front() {
+                        if let Some(Node::And(right_item)) = and_nodes.pop_front() {
+                            and_nodes.push_back(Node::two_or_to_and(
                                 vars.create(),
                                 left_item,
                                 right_item,
