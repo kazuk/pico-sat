@@ -36,3 +36,21 @@ fn test_choose1_in_30() {
         assert_eq!(false_count, 29, "no 29 false in var 1..30{:?}", answer);
     }
 }
+
+#[test]
+fn nested_one_of() {
+    let mut vars = Variables::new();
+    let mut parents = Vec::new();
+    for _i in 0..5 {
+        let mut items = Vec::new();
+        for _i in 0..5 {
+            items.push(lit(vars.create()))
+        }
+        parents.push(one_of(items));
+    }
+    let one = one_of(parents);
+    let mut solver_input = one.to_cnf(&mut vars);
+    trace!("solve");
+    let answers = solve_all(&mut solver_input);
+    assert_eq!(answers.len(), 25);
+}

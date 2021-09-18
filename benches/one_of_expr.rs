@@ -15,6 +15,7 @@ fn one_of_expression(count: usize) {
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("one_of 30", |b| b.iter(|| one_of_expression(30)));
+    c.bench_function("one_of 60", |b| b.iter(|| one_of_expression(60)));
 }
 
 criterion_group!(benches, criterion_benchmark);
