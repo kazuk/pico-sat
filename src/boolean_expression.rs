@@ -23,6 +23,25 @@ pub enum Node {
     True,
 }
 
+struct NodeWithSwitchLiterals {
+    node: Node,
+    switch_lits: Vec<Node>,
+}
+
+impl NodeWithSwitchLiterals {
+    fn new(node: Node) -> Self {
+        NodeWithSwitchLiterals {
+            node,
+            switch_lits: Vec::new(),
+        }
+    }
+
+    fn with_switch_literal(mut self, lit: Node) -> Self {
+        self.switch_lits.push(lit);
+        self
+    }
+}
+
 impl Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self {
@@ -445,6 +464,16 @@ impl Node {
         }
     }
 
+    /// create and Node from Owned Nodes
+    #[tracing::instrument]
+    pub fn or_from_owned(items: Vec<Node>) -> Node {
+        if items.len() == 1 {
+            items[0].to_owned()
+        } else {
+            Node::Or(items)
+        }
+    }
+
     // Node is And or contains and
     #[tracing::instrument]
     fn have_and(&self) -> bool {
@@ -457,22 +486,6 @@ impl Node {
         }
     }
 
-    #[tracing::instrument]
-    fn two_or_to_and(switch_variable: Variable, left: Vec<Node>, right: Vec<Node>) -> Node {
-        let lit = Self::lit(switch_variable);
-        let not = Self::not(&lit);
-        let mut result_item = Vec::with_capacity(left.len() + right.len());
-        for left_item in left {
-            assert!(!left_item.have_and());
-            result_item.push(Node::or(vec![&left_item, &lit]));
-        }
-        for right_item in right {
-            assert!(!right_item.have_and());
-            result_item.push(Node::or(vec![&right_item, &not]));
-        }
-        Node::and_from_owned(result_item)
-    }
-
     /// convert node ot AND (OR( NOT( Literal )))
     #[tracing::instrument]
     pub fn to_and_or_not_form(&self, vars: &mut Variables) -> Self {
@@ -483,7 +496,9 @@ impl Node {
 
                 for item in items {
                     match item {
-                        Node::And(_) => and_nodes.push_back(item),
+                        Node::And(_) => {
+                            and_nodes.push_back(vec![NodeWithSwitchLiterals::new(item)])
+                        }
                         _ => other_nodes.push(item),
                     }
                 }
@@ -497,13 +512,20 @@ impl Node {
                 // => (A||Z) && (B||Z) && (C||Z)
                 // && (D||~Z) && (E||~Z) && (F||~Z)
                 while and_nodes.len() >= 2 {
-                    if let Some(Node::And(left_item)) = and_nodes.pop_front() {
-                        if let Some(Node::And(right_item)) = and_nodes.pop_front() {
-                            and_nodes.push_back(Node::two_or_to_and(
-                                vars.create(),
-                                left_item,
-                                right_item,
-                            ))
+                    if let Some(left) = and_nodes.pop_front() {
+                        if let Some(right) = and_nodes.pop_front() {
+                            let v = vars.create();
+                            let t = Node::Literal(v, true);
+                            let f = Node::Literal(v, false);
+
+                            and_nodes.push_back(
+                                left.into_iter()
+                                    .map(|l| l.with_switch_literal(t.clone()))
+                                    .chain(
+                                        right.into_iter().map(|r| r.with_switch_literal(f.clone())),
+                                    )
+                                    .collect(),
+                            )
                         } else {
                             panic!("Not and!")
                         }
@@ -512,7 +534,18 @@ impl Node {
                     }
                 }
 
-                and_nodes[0].clone()
+                let and_nodes = and_nodes.pop_back().unwrap();
+                let mut result_items = Vec::new();
+                for item in and_nodes {
+                    if let Node::And(node_content) = item.node {
+                        for node_item in node_content {
+                            let mut switch_lits = item.switch_lits.clone();
+                            switch_lits.push(node_item);
+                            result_items.push(Node::or_from_owned(switch_lits));
+                        }
+                    }
+                }
+                Node::and_from_owned(result_items)
             } else {
                 panic!("Not or node!")
             }
