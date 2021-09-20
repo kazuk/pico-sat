@@ -205,8 +205,7 @@ pub fn dpll_split(input: &mut Cnf, point: &Variable) -> (Cnf, i32, i32) {
                 }
             }
             result1.push(items);
-        }
-        if node.contains(&point.f()) {
+        } else if node.contains(&point.f()) {
             let mut items = Vec::new();
             for item in node.iter() {
                 if !item.references(point) {
@@ -215,6 +214,11 @@ pub fn dpll_split(input: &mut Cnf, point: &Variable) -> (Cnf, i32, i32) {
                 }
             }
             result2.push(items);
+        } else {
+            count1 += node.len() as i32;
+            count2 += node.len() as i32;
+            result1.push(node.clone());
+            result2.push(node.clone());
         }
     }
     // write back to input
