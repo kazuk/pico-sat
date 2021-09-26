@@ -14,7 +14,16 @@ async fn solve_async_internal(
     if tx_complete.is_closed() {
         return;
     };
-    while let Some(mut result) = solve_partial(input) {
+    loop {
+        let mut result = solve_partial(input);
+        if is_unsat(input) {
+            if tx_complete.is_closed() {
+                return;
+            };
+            tx_complete.send(None).await.unwrap();
+            return;
+        }
+
         if tx_complete.is_closed() {
             return;
         };
@@ -36,12 +45,6 @@ async fn solve_async_internal(
             solve_async_internal(&mut prefix_false, &mut false_part, tx_complete_child).await;
         });
         prefix.push(SolverAction::Split(split_point.t()));
-    }
-    if is_unsat(input) {
-        if tx_complete.is_closed() {
-            return;
-        };
-        tx_complete.send(None).await.unwrap();
     }
 }
 

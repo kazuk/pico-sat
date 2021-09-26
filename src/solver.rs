@@ -304,7 +304,7 @@ pub fn find_max_used_variable(input: &Cnf) -> Option<Variable> {
 }
 
 /// repeating apply "erase one literal"
-fn solve_partial(input: &mut Cnf) -> Option<Vec<SolverAction>> {
+fn solve_partial(input: &mut Cnf) -> Vec<SolverAction> {
     let mut result = Vec::new();
 
     while let Some(lit) = dpll_find_one_literal(input) {
@@ -313,7 +313,7 @@ fn solve_partial(input: &mut Cnf) -> Option<Vec<SolverAction>> {
         // apply one literal rule
         dpll_erase_one_literal(input, lit);
     }
-    Some(result)
+    result
 }
 
 /// SAT solve and returns one result
@@ -360,34 +360,38 @@ fn solve_partial(input: &mut Cnf) -> Option<Vec<SolverAction>> {
 /// ```
 
 pub fn solve_one_verbose(input: &mut Cnf) -> Option<Vec<SolverAction>> {
-    let partial_result = solve_partial(input);
-    if is_unsat(input) {
-        return None;
-    }
-    if let Some(mut result) = partial_result {
-        if is_sat(input) {
-            return Some(result);
+    let mut stack = Vec::new();
+
+    stack.push((Vec::new(), input.clone()));
+    while let Some((mut prefix, mut formula)) = stack.pop() {
+        let mut partial_result = solve_partial(&mut formula);
+        prefix.append(&mut partial_result);
+
+        if is_unsat(&formula) {
+            continue;
         }
-        let split_point = find_max_used_variable(input).unwrap();
-        let (mut false_part, t_count, f_count) = dpll_split(input, &split_point);
+        if is_sat(&formula) {
+            return Some(prefix);
+        }
+        let split_point = find_max_used_variable(&formula).unwrap();
+        let (false_part, t_count, f_count) = dpll_split(&mut formula, &split_point);
+
         if t_count <= f_count {
-            if let Some(child_result) = solve_one_verbose(input) {
-                result.push(SolverAction::Split(split_point.t()));
-                return Some([result, child_result].concat());
-            }
-            if let Some(child_result) = solve_one_verbose(&mut false_part) {
-                result.push(SolverAction::Split(split_point.f()));
-                return Some([result, child_result].concat());
-            }
+            let mut false_prefix = prefix.clone();
+            false_prefix.push(SolverAction::Split(split_point.f()));
+            stack.push((false_prefix, false_part));
+
+            let mut true_prefix = prefix.clone();
+            true_prefix.push(SolverAction::Split(split_point.t()));
+            stack.push((true_prefix, formula));
         } else {
-            if let Some(child_result) = solve_one_verbose(&mut false_part) {
-                result.push(SolverAction::Split(split_point.f()));
-                return Some([result, child_result].concat());
-            }
-            if let Some(child_result) = solve_one_verbose(input) {
-                result.push(SolverAction::Split(split_point.t()));
-                return Some([result, child_result].concat());
-            }
+            let mut true_prefix = prefix.clone();
+            true_prefix.push(SolverAction::Split(split_point.t()));
+            stack.push((true_prefix, formula));
+
+            let mut false_prefix = prefix.clone();
+            false_prefix.push(SolverAction::Split(split_point.f()));
+            stack.push((false_prefix, false_part));
         }
     }
     None
@@ -417,44 +421,46 @@ fn continue_solve(
     input: &mut Cnf,
     satisfy_vars: u32,
 ) -> Vec<Vec<SolverAction>> {
-    let partial_result = solve_partial(input);
-    let prefix = [prefix, partial_result.unwrap()].concat();
-    if is_unsat(input) {
-        return vec![];
-    }
-    if is_sat(input) {
-        return vec![prefix];
-    }
-    let split_point = find_max_used_variable(input).unwrap();
-
-    let (mut false_part, _, _) = dpll_split(input, &split_point);
-
-    let mut true_prefix = prefix.clone();
-    true_prefix.push(SolverAction::Split(split_point.t()));
-    if satisfied_all(&true_prefix, satisfy_vars) {
-        let true_result = solve_one_verbose(input);
-        if let Some(mut sat_ans) = true_result {
-            true_prefix.append(&mut sat_ans);
-            return vec![true_prefix];
-        } else {
-            let mut false_prefix = prefix;
-            false_prefix.push(SolverAction::Split(split_point.f()));
-            let false_result = solve_one_verbose(&mut false_part);
-            if let Some(mut sat_ans) = false_result {
-                false_prefix.append(&mut sat_ans);
-                return vec![false_prefix];
-            }
-            return vec![];
+    let mut result = Vec::new();
+    let mut stack = Vec::new();
+    stack.push((prefix, input.clone()));
+    while let Some((prefix, mut formula)) = stack.pop() {
+        let partial_result = solve_partial(&mut formula);
+        let prefix = [prefix, partial_result].concat();
+        if is_unsat(&formula) {
+            continue;
         }
-    } else {
-        let true_result = continue_solve(true_prefix, input, satisfy_vars);
+        if is_sat(&formula) {
+            result.push(prefix);
+            continue;
+        }
+        let split_point = find_max_used_variable(&formula).unwrap();
+        let (mut false_part, _, _) = dpll_split(&mut formula, &split_point);
 
-        let mut false_prefix = prefix;
-        false_prefix.push(SolverAction::Split(split_point.f()));
-        let false_result = continue_solve(false_prefix, &mut false_part, satisfy_vars);
+        let mut true_prefix = prefix.clone();
+        true_prefix.push(SolverAction::Split(split_point.t()));
 
-        [true_result, false_result].concat()
+        if satisfied_all(&true_prefix, satisfy_vars) {
+            if let Some(mut one_result) = solve_one_verbose(&mut formula) {
+                true_prefix.append(&mut one_result);
+                result.push(true_prefix);
+            } else {
+                if let Some(mut one_result) = solve_one_verbose(&mut false_part) {
+                    let mut false_prefix = prefix.clone();
+                    false_prefix.push(SolverAction::Split(split_point.f()));
+                    false_prefix.append(&mut one_result);
+                    result.push(false_prefix);
+                }
+            }
+        } else {
+            stack.push((true_prefix, formula));
+
+            let mut false_prefix = prefix.clone();
+            false_prefix.push(SolverAction::Split(split_point.f()));
+            stack.push((false_prefix, false_part));
+        }
     }
+    result
 }
 
 /// solve input and results all result
@@ -646,10 +652,10 @@ mod tests {
         assert!(!results.is_empty());
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].len(), 2);
-        assert_eq!(results[0][0], s.t());
-        assert_eq!(results[0][1], t.f());
+        assert_eq!(results[0][0], s.f());
+        assert_eq!(results[0][1], t.t());
         assert_eq!(results[1].len(), 2);
-        assert_eq!(results[1][0], s.f());
-        assert_eq!(results[1][1], t.t());
+        assert_eq!(results[1][0], s.t());
+        assert_eq!(results[1][1], t.f());
     }
 }
