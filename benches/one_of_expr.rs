@@ -8,8 +8,9 @@ fn one_of_expression(count: usize) {
         literals.push(lit(vars.create()))
     }
     let one_of_expr = one_of(literals);
+    let count_vars = vars.count();
     let mut cnf = one_of_expr.to_cnf(&mut vars);
-    let answers = solve_all(&mut cnf);
+    let answers = solve_all(&mut cnf, count_vars);
     assert!(!answers.is_empty());
 }
 

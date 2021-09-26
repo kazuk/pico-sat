@@ -164,10 +164,10 @@ pub fn main() -> Result<(), semver::Error> {
         .get(&("AAA".to_string(), Version::parse("1.0.0").unwrap()))
         .unwrap();
     let solve_node = solve_node.to_or_and_not_form();
-
+    let count_vars = vars.count();
     let mut solve_formula = solve_node.to_cnf(&mut vars);
     println!("solve_fomula:{:?}", solve_formula);
-    let answers = solve_all(&mut solve_formula);
+    let answers = solve_all(&mut solve_formula, count_vars);
     println!("answers:{:?}", answers);
     for _answer in answers {}
     Ok(())

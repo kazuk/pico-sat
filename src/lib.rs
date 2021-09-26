@@ -39,12 +39,18 @@
 
 mod boolean_expression;
 
+/// DIMACS format support
+pub mod dimacs;
+
 /// module solver
 ///
 /// DPLL SAT Solver and Solving step functions.
 pub mod solver;
 
+use std::cmp::Ordering;
+
 pub use boolean_expression::*;
+use solver::Cnf;
 pub use solver::{Literal, Variable, Variables};
 
 /// SAT solve and returns one result
@@ -94,18 +100,71 @@ pub fn solve_one(input: &mut Vec<Vec<Literal>>) -> Option<Vec<Literal>> {
 }
 
 /// SAT solve and returns all result
-pub fn solve_all(input: &mut Vec<Vec<Literal>>) -> Vec<Vec<Literal>> {
-    solver::solve_all(input)
+pub fn solve_all(input: &mut Vec<Vec<Literal>>, satisfy_vars: u32) -> Vec<Vec<Literal>> {
+    solver::solve_all(input, satisfy_vars)
 }
 
 /// Async version of solve_one
 #[cfg(feature = "async")]
 pub async fn solve_one_async(input: Vec<Vec<Literal>>) -> Option<Vec<Literal>> {
-    solver::async_solver::solve_one_async(input).await
+    use crate::solver::SolverAction;
+
+    let result = solver::async_solver::solve_one_async(input).await;
+    result.map(|r| SolverAction::simplify_answer(&r))
 }
 
 /// Async version of solve_all
 #[cfg(feature = "async")]
 pub async fn solve_all_async(input: Vec<Vec<Literal>>) -> Vec<Vec<Literal>> {
-    solver::async_solver::solve_all_async(input).await
+    use solver::SolverAction;
+
+    let results = solver::async_solver::solve_all_async(input).await;
+    results
+        .iter()
+        .map(|r| SolverAction::simplify_answer(r))
+        .collect()
+}
+
+#[allow(clippy::ptr_arg)]
+fn node_compare(left: &Vec<Literal>, right: &Vec<Literal>) -> Ordering {
+    match (left.len(), right.len()) {
+        (x, y) if x < y => Ordering::Less,
+        (x, y) if x > y => Ordering::Greater,
+        _ => {
+            for index in 0..left.len() {
+                match left[index]
+                    .var()
+                    .index()
+                    .partial_cmp(&right[index].var().index())
+                    .unwrap()
+                {
+                    Ordering::Less => return Ordering::Less,
+                    Ordering::Greater => return Ordering::Greater,
+                    Ordering::Equal => {}
+                }
+            }
+            Ordering::Equal
+        }
+    }
+}
+
+/// canonicalize cnf
+///
+/// Sort cnf nodes and items
+pub fn canonicalize(input: Cnf) -> Cnf {
+    let mut result: Cnf = input
+        .iter()
+        .map(|n| {
+            let mut items = n.clone();
+            items.sort_by(|left, right| {
+                left.var()
+                    .index()
+                    .partial_cmp(&right.var().index())
+                    .unwrap()
+            });
+            items
+        })
+        .collect();
+    result.sort_by(node_compare);
+    result
 }

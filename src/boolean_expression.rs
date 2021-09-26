@@ -900,6 +900,42 @@ impl Node {
         }
         Node::Or(or_set)
     }
+
+    /// zero_or_one_of( A,B,C )
+    ///
+    /// builds
+    ///
+    /// ```text
+    ///  ( (~A && ~B && ~C)
+    /// || ( A && ~B && ~C)
+    /// || (~A &&  B && ~C)
+    /// || (~A && ~B &&  C) )
+    /// ```
+    #[tracing::instrument]
+    pub fn zero_or_one_of(nodes: Vec<Node>) -> Node {
+        if nodes.len() == 1 {
+            return nodes[0].clone();
+        }
+        let length = nodes.len();
+        let mut or_set = Vec::new();
+        for index in 0..length {
+            let mut childs = Vec::new();
+            for (i, item) in nodes.iter().enumerate().take(length) {
+                childs.push(if i == index {
+                    item.clone()
+                } else {
+                    Self::not(item)
+                })
+            }
+            or_set.push(Node::and_from_owned(childs))
+        }
+        let mut childs = Vec::new();
+        for item in nodes {
+            childs.push(Self::not(&item));
+        }
+        or_set.push(Node::and_from_owned(childs));
+        Node::Or(or_set)
+    }
 }
 
 /// create literal node
@@ -984,6 +1020,11 @@ pub fn not(item: &Node) -> Node {
 /// short-cut for Node::one_of
 pub fn one_of(nodes: Vec<Node>) -> Node {
     Node::one_of(nodes)
+}
+
+/// short-cut for Node::one_of
+pub fn zero_or_one_of(nodes: Vec<Node>) -> Node {
+    Node::zero_or_one_of(nodes)
 }
 
 /// short-cut for Node::xor2

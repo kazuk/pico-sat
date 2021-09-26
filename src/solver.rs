@@ -23,6 +23,11 @@ pub enum Satisfaction {
 }
 
 impl Variable {
+    /// build valiable from index
+    pub fn from_index(index: u32) -> Self {
+        Self(index)
+    }
+
     /// returns variable index value
     pub fn index(&self) -> u32 {
         self.0
@@ -85,6 +90,11 @@ impl Variables {
         self.index += 1;
         result
     }
+
+    /// count of variables
+    pub fn count(&self) -> u32 {
+        self.index - 1
+    }
 }
 
 impl Default for Variables {
@@ -120,7 +130,8 @@ impl Literal {
         self.0.abs() == valiable.0 as i32
     }
 
-    fn to_parts(self) -> (bool, Variable) {
+    /// convert to value and valiable
+    pub fn to_parts(&self) -> (bool, Variable) {
         (self.0 >= 0, Variable(self.0.abs() as u32))
     }
 
@@ -132,6 +143,33 @@ impl Literal {
 impl From<(bool, Variable)> for Literal {
     fn from(lit: (bool, Variable)) -> Self {
         Literal::new(lit.0, lit.1)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+/// solver action
+pub enum SolverAction {
+    /// apply dpll_erase_one_literal
+    EraseOneLiteral(Literal),
+    /// apply dpll_erase_pure_literal
+    ErasePureLiteral(Literal),
+    /// apply dpll_split
+    Split(Literal),
+}
+
+impl SolverAction {
+    /// gets literal from this SolverAction
+    pub fn to_literal(&self) -> Literal {
+        match self {
+            SolverAction::EraseOneLiteral(l)
+            | SolverAction::ErasePureLiteral(l)
+            | SolverAction::Split(l) => *l,
+        }
+    }
+
+    /// verbose solver steps to literal list
+    pub fn simplify_answer(answer: &[SolverAction]) -> Vec<Literal> {
+        answer.iter().map(|i| i.to_literal()).collect()
     }
 }
 
@@ -204,7 +242,7 @@ pub fn dpll_split(input: &mut Cnf, point: &Variable) -> (Cnf, i32, i32) {
                     count1 += 1;
                 }
             }
-            result1.push(items);
+            result2.push(items);
         } else if node.contains(&point.f()) {
             let mut items = Vec::new();
             for item in node.iter() {
@@ -213,7 +251,7 @@ pub fn dpll_split(input: &mut Cnf, point: &Variable) -> (Cnf, i32, i32) {
                     count2 += 1;
                 }
             }
-            result2.push(items);
+            result1.push(items);
         } else {
             count1 += node.len() as i32;
             count2 += node.len() as i32;
@@ -236,7 +274,7 @@ pub fn is_sat(input: &Cnf) -> bool {
 
 /// check input is UNSAT
 #[allow(clippy::ptr_arg)]
-fn is_unsat(input: &Cnf) -> bool {
+pub fn is_unsat(input: &Cnf) -> bool {
     for node in input.iter() {
         if node.is_empty() {
             return true;
@@ -266,12 +304,12 @@ pub fn find_max_used_variable(input: &Cnf) -> Option<Variable> {
 }
 
 /// repeating apply "erase one literal"
-fn solve_partial(input: &mut Cnf) -> Option<Vec<Literal>> {
+fn solve_partial(input: &mut Cnf) -> Option<Vec<SolverAction>> {
     let mut result = Vec::new();
 
     while let Some(lit) = dpll_find_one_literal(input) {
         // add lit to answer
-        result.push(lit);
+        result.push(SolverAction::ErasePureLiteral(lit));
         // apply one literal rule
         dpll_erase_one_literal(input, lit);
     }
@@ -321,7 +359,7 @@ fn solve_partial(input: &mut Cnf) -> Option<Vec<Literal>> {
 /// }
 /// ```
 
-pub fn solve_one(input: &mut Cnf) -> Option<Vec<Literal>> {
+pub fn solve_one_verbose(input: &mut Cnf) -> Option<Vec<SolverAction>> {
     let partial_result = solve_partial(input);
     if is_unsat(input) {
         return None;
@@ -333,21 +371,21 @@ pub fn solve_one(input: &mut Cnf) -> Option<Vec<Literal>> {
         let split_point = find_max_used_variable(input).unwrap();
         let (mut false_part, t_count, f_count) = dpll_split(input, &split_point);
         if t_count <= f_count {
-            if let Some(child_result) = solve_one(input) {
-                result.push(split_point.t());
+            if let Some(child_result) = solve_one_verbose(input) {
+                result.push(SolverAction::Split(split_point.t()));
                 return Some([result, child_result].concat());
             }
-            if let Some(child_result) = solve_one(&mut false_part) {
-                result.push(split_point.f());
+            if let Some(child_result) = solve_one_verbose(&mut false_part) {
+                result.push(SolverAction::Split(split_point.f()));
                 return Some([result, child_result].concat());
             }
         } else {
-            if let Some(child_result) = solve_one(&mut false_part) {
-                result.push(split_point.f());
+            if let Some(child_result) = solve_one_verbose(&mut false_part) {
+                result.push(SolverAction::Split(split_point.f()));
                 return Some([result, child_result].concat());
             }
-            if let Some(child_result) = solve_one(input) {
-                result.push(split_point.t());
+            if let Some(child_result) = solve_one_verbose(input) {
+                result.push(SolverAction::Split(split_point.t()));
                 return Some([result, child_result].concat());
             }
         }
@@ -355,7 +393,30 @@ pub fn solve_one(input: &mut Cnf) -> Option<Vec<Literal>> {
     None
 }
 
-fn continue_solve(prefix: Vec<Literal>, input: &mut Cnf) -> Vec<Vec<Literal>> {
+/// solve input and results simple answer
+pub fn solve_one(input: &mut Cnf) -> Option<Vec<Literal>> {
+    let result = solve_one_verbose(input);
+    result.map(|r| SolverAction::simplify_answer(&r))
+}
+
+// all SAT valiables contains in actions
+fn satisfied_all(actions: &[SolverAction], satisfy_vars: u32) -> bool {
+    for var_num in 1..=satisfy_vars {
+        if !actions
+            .iter()
+            .any(|a| a.to_literal().var().index() == var_num)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn continue_solve(
+    prefix: Vec<SolverAction>,
+    input: &mut Cnf,
+    satisfy_vars: u32,
+) -> Vec<Vec<SolverAction>> {
     let partial_result = solve_partial(input);
     let prefix = [prefix, partial_result.unwrap()].concat();
     if is_unsat(input) {
@@ -369,19 +430,45 @@ fn continue_solve(prefix: Vec<Literal>, input: &mut Cnf) -> Vec<Vec<Literal>> {
     let (mut false_part, _, _) = dpll_split(input, &split_point);
 
     let mut true_prefix = prefix.clone();
-    true_prefix.push(split_point.t());
-    let true_result = continue_solve(true_prefix, input);
+    true_prefix.push(SolverAction::Split(split_point.t()));
+    if satisfied_all(&true_prefix, satisfy_vars) {
+        let true_result = solve_one_verbose(input);
+        if let Some(mut sat_ans) = true_result {
+            true_prefix.append(&mut sat_ans);
+            return vec![true_prefix];
+        } else {
+            let mut false_prefix = prefix;
+            false_prefix.push(SolverAction::Split(split_point.f()));
+            let false_result = solve_one_verbose(&mut false_part);
+            if let Some(mut sat_ans) = false_result {
+                false_prefix.append(&mut sat_ans);
+                return vec![false_prefix];
+            }
+            return vec![];
+        }
+    } else {
+        let true_result = continue_solve(true_prefix, input, satisfy_vars);
 
-    let mut false_prefix = prefix;
-    false_prefix.push(split_point.f());
-    let false_result = continue_solve(false_prefix, &mut false_part);
+        let mut false_prefix = prefix;
+        false_prefix.push(SolverAction::Split(split_point.f()));
+        let false_result = continue_solve(false_prefix, &mut false_part, satisfy_vars);
 
-    [true_result, false_result].concat()
+        [true_result, false_result].concat()
+    }
+}
+
+/// solve input and results all result
+pub fn solve_all_verbose(input: &mut Cnf, satisfy_vars: u32) -> Vec<Vec<SolverAction>> {
+    continue_solve(vec![], input, satisfy_vars)
 }
 
 /// SAT solve and returns all result
-pub fn solve_all(input: &mut Cnf) -> Vec<Vec<Literal>> {
-    continue_solve(vec![], input)
+pub fn solve_all(input: &mut Cnf, satisfy_vars: u32) -> Vec<Vec<Literal>> {
+    let verbose_result = continue_solve(vec![], input, satisfy_vars);
+    verbose_result
+        .iter()
+        .map(|r| SolverAction::simplify_answer(r))
+        .collect()
 }
 
 #[cfg(test)]
@@ -415,6 +502,24 @@ mod tests {
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].len(), 1);
         assert_eq!(f[0][0], var2.f());
+    }
+
+    #[test]
+    fn test_split_and_result() {
+        let mut vars = Variables::new();
+        let p = vars.create();
+        let q = vars.create();
+        let r = vars.create();
+        let mut f = vec![vec![p.t(), q.f()], vec![p.f(), r.t()], vec![q.t()]];
+        eprintln!("input formula: {:?}", f);
+        eprintln!("spilt P: {:?}", p);
+        let (_fpart, _tcnt, _fcnt) = dpll_split(&mut f, &p);
+        eprintln!("when P: {:?}", f);
+        assert_eq!(f.len(), 2);
+        assert_eq!(f[0].len(), 1);
+        assert_eq!(f[0][0], r.t());
+        assert_eq!(f[1].len(), 1);
+        assert_eq!(f[1][0], q.t());
     }
 
     #[test]
@@ -493,18 +598,18 @@ mod tests {
         assert_eq!(c2, 1);
         assert_eq!(t_part.len(), 1);
         assert_eq!(t_part[0].len(), 1);
-        assert_eq!(t_part[0][0], t.t());
+        assert_eq!(t_part[0][0], t.f());
         assert_eq!(f_part.len(), 1);
         assert_eq!(f_part[0].len(), 1);
-        assert_eq!(f_part[0][0], t.f());
+        assert_eq!(f_part[0][0], t.t());
 
         let one_lit = dpll_find_one_literal(&t_part);
-        assert_eq!(one_lit, Some(t.t()));
+        assert_eq!(one_lit, Some(t.f()));
         dpll_erase_one_literal(&mut t_part, one_lit.unwrap());
         assert_eq!(t_part.len(), 0); // SAT
 
         let one_lit = dpll_find_one_literal(&f_part);
-        assert_eq!(one_lit, Some(t.f()));
+        assert_eq!(one_lit, Some(t.t()));
         dpll_erase_one_literal(&mut f_part, one_lit.unwrap());
         assert_eq!(f_part.len(), 0); // SAT
     }
@@ -537,14 +642,14 @@ mod tests {
         let t = vars.create();
 
         let mut f = vec![vec![s.t(), t.t()], vec![s.f(), t.f()]];
-        let results = solve_all(&mut f);
+        let results = solve_all(&mut f, 2);
         assert!(!results.is_empty());
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].len(), 2);
         assert_eq!(results[0][0], s.t());
-        assert_eq!(results[0][1], t.t());
+        assert_eq!(results[0][1], t.f());
         assert_eq!(results[1].len(), 2);
         assert_eq!(results[1][0], s.f());
-        assert_eq!(results[1][1], t.f());
+        assert_eq!(results[1][1], t.t());
     }
 }

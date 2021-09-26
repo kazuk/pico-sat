@@ -20,6 +20,10 @@ test-case = "1.2.0"
 name = "one_of_expr"
 harness = false
 
+[[bench]]
+name = "n_queen"
+harness = false
+
 [profile.bench]
 debug=true
 
