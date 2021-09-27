@@ -32,7 +32,8 @@ async fn solve_async_internal(
             tx_complete.send(Some(result)).await.unwrap();
             return;
         }
-        let split_point = find_max_used_variable(input).unwrap();
+        // FIXME
+        let split_point = find_max_used_variable(input, 100).unwrap();
         let (mut false_part, _, _) = dpll_split(input, &split_point);
         if tx_complete.is_closed() {
             return;

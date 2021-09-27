@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use pico_sat::*;
+use pico_sat::{heuristics::*, *};
 
 fn one_of_expression(count: usize) {
     let mut vars = Variables::new();
@@ -10,7 +10,13 @@ fn one_of_expression(count: usize) {
     let one_of_expr = one_of(literals);
     let count_vars = vars.count();
     let mut cnf = one_of_expr.to_cnf(&mut vars);
-    let answers = solve_all(&mut cnf, count_vars);
+    let answers = solve_all(
+        &mut cnf,
+        count_vars,
+        &SplitOnMaxVars {
+            count_vars: vars.count() as usize,
+        },
+    );
     assert!(!answers.is_empty());
 }
 

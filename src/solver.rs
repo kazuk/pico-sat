@@ -283,10 +283,16 @@ pub fn is_unsat(input: &Cnf) -> bool {
     false
 }
 
+/// implement heuristics for solver process
+pub trait SolverHeuristics {
+    /// get variable for split
+    fn find_split_point(&self, cnf: &Cnf, satisfy_vars: u32) -> Variable;
+}
+
 /// find variable used often in input
 #[allow(clippy::ptr_arg)]
-pub fn find_max_used_variable(input: &Cnf) -> Option<Variable> {
-    let mut counts = HashMap::new();
+pub fn find_max_used_variable(input: &Cnf, count_vars: usize) -> Option<Variable> {
+    let mut counts = HashMap::with_capacity(count_vars);
     let mut max_count = 0;
     let mut max_key = None;
     for node in input.iter() {
@@ -309,7 +315,7 @@ fn solve_partial(input: &mut Cnf) -> Vec<SolverAction> {
 
     while let Some(lit) = dpll_find_one_literal(input) {
         // add lit to answer
-        result.push(SolverAction::ErasePureLiteral(lit));
+        result.push(SolverAction::EraseOneLiteral(lit));
         // apply one literal rule
         dpll_erase_one_literal(input, lit);
     }
@@ -330,7 +336,7 @@ fn solve_partial(input: &mut Cnf) -> Vec<SolverAction> {
 /// # Examples
 ///
 /// ```rust
-/// use pico_sat::{Variables, solve_one};
+/// use pico_sat::{Variables, solve_one, heuristics::SplitOnMaxVars };
 /// let mut vars = Variables::new();
 /// let o = vars.create();
 /// let p = vars.create();
@@ -341,7 +347,7 @@ fn solve_partial(input: &mut Cnf) -> Vec<SolverAction> {
 ///    vec![ p.f(), r.f() ],        // && (!P || !R )
 ///    vec![ r.t() ]                // && ( R)
 /// ];
-/// match solve_one(&mut f) {
+/// match solve_one(&mut f, 4, &SplitOnMaxVars { count_vars: vars.count() as usize } ) {
 ///     Some(answer) => {
 ///         // SAT
 ///         assert_eq!(answer.len(), 3);
@@ -359,7 +365,11 @@ fn solve_partial(input: &mut Cnf) -> Vec<SolverAction> {
 /// }
 /// ```
 
-pub fn solve_one_verbose(input: &mut Cnf) -> Option<Vec<SolverAction>> {
+pub fn solve_one_verbose<S: SolverHeuristics>(
+    input: &mut Cnf,
+    satisfy_vars: u32,
+    heuristics: &S,
+) -> Option<Vec<SolverAction>> {
     let mut stack = Vec::new();
 
     stack.push((Vec::new(), input.clone()));
@@ -373,7 +383,7 @@ pub fn solve_one_verbose(input: &mut Cnf) -> Option<Vec<SolverAction>> {
         if is_sat(&formula) {
             return Some(prefix);
         }
-        let split_point = find_max_used_variable(&formula).unwrap();
+        let split_point = heuristics.find_split_point(&formula, satisfy_vars);
         let (false_part, t_count, f_count) = dpll_split(&mut formula, &split_point);
 
         if t_count <= f_count {
@@ -398,8 +408,12 @@ pub fn solve_one_verbose(input: &mut Cnf) -> Option<Vec<SolverAction>> {
 }
 
 /// solve input and results simple answer
-pub fn solve_one(input: &mut Cnf) -> Option<Vec<Literal>> {
-    let result = solve_one_verbose(input);
+pub fn solve_one<S: SolverHeuristics>(
+    input: &mut Cnf,
+    satisfy_vars: u32,
+    heuristics: &S,
+) -> Option<Vec<Literal>> {
+    let result = solve_one_verbose(input, satisfy_vars, heuristics);
     result.map(|r| SolverAction::simplify_answer(&r))
 }
 
@@ -416,10 +430,11 @@ fn satisfied_all(actions: &[SolverAction], satisfy_vars: u32) -> bool {
     true
 }
 
-fn continue_solve(
+fn continue_solve<S: SolverHeuristics>(
     prefix: Vec<SolverAction>,
     input: &mut Cnf,
     satisfy_vars: u32,
+    heuristics: &S,
 ) -> Vec<Vec<SolverAction>> {
     let mut result = Vec::new();
     let mut stack = Vec::new();
@@ -434,18 +449,21 @@ fn continue_solve(
             result.push(prefix);
             continue;
         }
-        let split_point = find_max_used_variable(&formula).unwrap();
+        let split_point = heuristics.find_split_point(&formula, satisfy_vars);
         let (mut false_part, _, _) = dpll_split(&mut formula, &split_point);
 
         let mut true_prefix = prefix.clone();
         true_prefix.push(SolverAction::Split(split_point.t()));
 
         if satisfied_all(&true_prefix, satisfy_vars) {
-            if let Some(mut one_result) = solve_one_verbose(&mut formula) {
+            if let Some(mut one_result) = solve_one_verbose(&mut formula, satisfy_vars, heuristics)
+            {
                 true_prefix.append(&mut one_result);
                 result.push(true_prefix);
             } else {
-                if let Some(mut one_result) = solve_one_verbose(&mut false_part) {
+                if let Some(mut one_result) =
+                    solve_one_verbose(&mut false_part, satisfy_vars, heuristics)
+                {
                     let mut false_prefix = prefix.clone();
                     false_prefix.push(SolverAction::Split(split_point.f()));
                     false_prefix.append(&mut one_result);
@@ -464,13 +482,21 @@ fn continue_solve(
 }
 
 /// solve input and results all result
-pub fn solve_all_verbose(input: &mut Cnf, satisfy_vars: u32) -> Vec<Vec<SolverAction>> {
-    continue_solve(vec![], input, satisfy_vars)
+pub fn solve_all_verbose<S: SolverHeuristics>(
+    input: &mut Cnf,
+    satisfy_vars: u32,
+    heuristics: &S,
+) -> Vec<Vec<SolverAction>> {
+    continue_solve(vec![], input, satisfy_vars, heuristics)
 }
 
 /// SAT solve and returns all result
-pub fn solve_all(input: &mut Cnf, satisfy_vars: u32) -> Vec<Vec<Literal>> {
-    let verbose_result = continue_solve(vec![], input, satisfy_vars);
+pub fn solve_all<S: SolverHeuristics>(
+    input: &mut Cnf,
+    satisfy_vars: u32,
+    heuristics: &S,
+) -> Vec<Vec<Literal>> {
+    let verbose_result = continue_solve(vec![], input, satisfy_vars, heuristics);
     verbose_result
         .iter()
         .map(|r| SolverAction::simplify_answer(r))
@@ -479,9 +505,12 @@ pub fn solve_all(input: &mut Cnf, satisfy_vars: u32) -> Vec<Vec<Literal>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::solver::{
-        dpll_erase_one_literal, dpll_erase_pure_literal, dpll_find_one_literal,
-        dpll_find_pure_literal, dpll_split, solve_all, solve_one, Variables,
+    use crate::{
+        heuristics::SplitOnMaxVars,
+        solver::{
+            dpll_erase_one_literal, dpll_erase_pure_literal, dpll_find_one_literal,
+            dpll_find_pure_literal, dpll_split, solve_all, solve_one, Variables,
+        },
     };
 
     #[test]
@@ -627,7 +656,13 @@ mod tests {
         let q = vars.create();
         let r = vars.create();
         let mut f = vec![vec![p.t(), q.t(), r.f()], vec![p.f(), r.f()], vec![r.t()]];
-        match solve_one(&mut f) {
+        match solve_one(
+            &mut f,
+            3,
+            &SplitOnMaxVars {
+                count_vars: vars.count() as usize,
+            },
+        ) {
             Some(answer) => {
                 // Some means SAT
                 assert_eq!(answer.len(), 3);
@@ -642,13 +677,19 @@ mod tests {
     }
 
     #[test]
-    fn test_solve_all() {
+    fn test_solve_all_split_max_vars() {
         let mut vars = Variables::new();
         let s = vars.create();
         let t = vars.create();
 
         let mut f = vec![vec![s.t(), t.t()], vec![s.f(), t.f()]];
-        let results = solve_all(&mut f, 2);
+        let results = solve_all(
+            &mut f,
+            2,
+            &SplitOnMaxVars {
+                count_vars: vars.count() as usize,
+            },
+        );
         assert!(!results.is_empty());
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].len(), 2);

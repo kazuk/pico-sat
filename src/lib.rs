@@ -7,7 +7,7 @@
 //! # How to use solver
 //!
 //! ```rust
-//! use pico_sat::{Variables, solve_one};
+//! use pico_sat::{Variables, solve_one, heuristics::SplitOnMaxVars };
 //! let mut vars = Variables::new();
 //! let o = vars.create();
 //! let p = vars.create();
@@ -18,7 +18,7 @@
 //!    vec![ p.f(), r.f() ],
 //!    vec![ r.t() ]
 //! ];
-//! match solve_one(&mut f) {
+//! match solve_one(&mut f, 3, &SplitOnMaxVars { count_vars: vars.count() as usize} ) {
 //!     Some(answer) => {
 //!         // SAT
 //!         assert_eq!(answer.len(), 3);
@@ -50,8 +50,11 @@ pub mod solver;
 use std::cmp::Ordering;
 
 pub use boolean_expression::*;
-use solver::Cnf;
+use solver::{Cnf, SolverHeuristics};
 pub use solver::{Literal, Variable, Variables};
+
+/// heuristic option for SAT solver
+pub mod heuristics;
 
 /// SAT solve and returns one result
 ///
@@ -67,7 +70,7 @@ pub use solver::{Literal, Variable, Variables};
 /// # Examples
 ///
 /// ```rust
-/// use pico_sat::{Variables, solve_one};
+/// use pico_sat::{Variables, solve_one, heuristics::SplitOnMaxVars};
 /// let mut vars = Variables::new();
 /// let o = vars.create();
 /// let p = vars.create();
@@ -78,7 +81,7 @@ pub use solver::{Literal, Variable, Variables};
 ///    vec![ p.f(), r.f() ],        // && (!P || !R )
 ///    vec![ r.t() ]                // && ( R)
 /// ];
-/// match solve_one(&mut f) {
+/// match solve_one(&mut f, 4, &SplitOnMaxVars { count_vars: vars.count() as usize} ) {
 ///     Some(answer) => {
 ///         // SAT
 ///         assert_eq!(answer.len(), 3);
@@ -95,13 +98,21 @@ pub use solver::{Literal, Variable, Variables};
 ///     }
 /// }
 /// ```
-pub fn solve_one(input: &mut Vec<Vec<Literal>>) -> Option<Vec<Literal>> {
-    solver::solve_one(input)
+pub fn solve_one<S: SolverHeuristics>(
+    input: &mut Vec<Vec<Literal>>,
+    satisfy_vars: u32,
+    heuristics: &S,
+) -> Option<Vec<Literal>> {
+    solver::solve_one(input, satisfy_vars, heuristics)
 }
 
 /// SAT solve and returns all result
-pub fn solve_all(input: &mut Vec<Vec<Literal>>, satisfy_vars: u32) -> Vec<Vec<Literal>> {
-    solver::solve_all(input, satisfy_vars)
+pub fn solve_all<S: SolverHeuristics>(
+    input: &mut Vec<Vec<Literal>>,
+    satisfy_vars: u32,
+    heuristics: &S,
+) -> Vec<Vec<Literal>> {
+    solver::solve_all(input, satisfy_vars, heuristics)
 }
 
 /// Async version of solve_one

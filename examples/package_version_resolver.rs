@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
-use pico_sat::{and, lit, one_of, solve_all, Node, Variables};
+use pico_sat::{and, heuristics::SplitOnMaxVars, lit, one_of, solve_all, Node, Variables};
 use semver::{Version, VersionReq};
 
 #[derive(Clone)]
@@ -167,7 +167,13 @@ pub fn main() -> Result<(), semver::Error> {
     let count_vars = vars.count();
     let mut solve_formula = solve_node.to_cnf(&mut vars);
     println!("solve_fomula:{:?}", solve_formula);
-    let answers = solve_all(&mut solve_formula, count_vars);
+    let answers = solve_all(
+        &mut solve_formula,
+        count_vars,
+        &SplitOnMaxVars {
+            count_vars: vars.count() as usize,
+        },
+    );
     println!("answers:{:?}", answers);
     for _answer in answers {}
     Ok(())

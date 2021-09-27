@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use pico_sat::{
     and,
     dimacs::DimacsWriter,
+    heuristics::SplitOnMaxVars,
     lit, one_of, solve_all,
     solver::{dpll_split, solve_all_verbose, Cnf},
     zero_or_one_of, Node, Variable, Variables,
@@ -25,7 +26,13 @@ fn test_choose1_in_30() {
     trace!("build cnf");
     let mut solver_input = one.to_cnf(&mut vars);
     trace!("solve");
-    let answers = solve_all(&mut solver_input, count_vars);
+    let answers = solve_all(
+        &mut solver_input,
+        count_vars,
+        &SplitOnMaxVars {
+            count_vars: vars.count() as usize,
+        },
+    );
     assert_eq!(answers.len(), 30);
 
     for answer in answers {
@@ -62,7 +69,13 @@ fn nested_one_of() {
     let mut solver_input = one.to_cnf(&mut vars);
     eprintln!("solver_input={:?}", solver_input);
     trace!("solve");
-    let answers = solve_all(&mut solver_input, count_vars);
+    let answers = solve_all(
+        &mut solver_input,
+        count_vars,
+        &SplitOnMaxVars {
+            count_vars: vars.count() as usize,
+        },
+    );
     let mut hash = HashMap::new();
 
     for answer in answers {
@@ -158,7 +171,7 @@ fn n_queen_4_split() {
 }
 
 #[test]
-fn n_queen_4_all() {
+fn n_queen_4_all_maxvars() {
     let mut vars = Variables::new();
     let node = n_queen_formula(&mut vars, 4);
     let count_vars = vars.count();
@@ -166,7 +179,13 @@ fn n_queen_4_all() {
 
     let mut form = node.to_cnf(&mut vars);
 
-    let result = solve_all_verbose(&mut form, count_vars);
+    let result = solve_all_verbose(
+        &mut form,
+        count_vars,
+        &SplitOnMaxVars {
+            count_vars: vars.count() as usize,
+        },
+    );
     eprintln!("{:?}", result);
     assert_eq!(result.len(), 2);
 }
