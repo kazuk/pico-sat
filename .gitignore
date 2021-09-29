@@ -4,3 +4,4 @@ default.profraw
 flamegraph.svg
 perf.data
 perf.data*
+.vscode

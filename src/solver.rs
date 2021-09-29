@@ -55,6 +55,74 @@ impl Clause {
         self.len() == 0
     }
 
+    /// remove Literal from clause
+    pub fn remove(&mut self, lit: &Literal) {
+        match self {
+            Clause::Small(s) => {
+                if let Some(index) = s.iter().position(|l| l == lit) {
+                    if index == s.len() - 1 {
+                        let _ = s.pop();
+                    } else {
+                        s[index] = s.pop().unwrap();
+                    }
+                }
+            }
+            Clause::Big(v) => {
+                if let Some(index) = v.iter().position(|l| l == lit) {
+                    if index == v.len() - 1 {
+                        let _ = v.pop();
+                    } else {
+                        v[index] = v.pop().unwrap();
+                    }
+                }
+                if v.len() <= SMALL_CAP {
+                    *self = Clause::Small(v.as_slice().try_into().unwrap())
+                }
+            }
+        }
+    }
+
+    /// remove Literal from clause
+    pub fn remove_variable(&mut self, var: &Variable) {
+        match self {
+            Clause::Small(v) => {
+                let mut index = v.len() - 1;
+                loop {
+                    if v[index].references(var) {
+                        if index == v.len() - 1 {
+                            let _ = v.pop().unwrap();
+                        } else {
+                            v[index] = v.pop().unwrap();
+                        }
+                    }
+                    if index == 0 {
+                        break;
+                    }
+                    index -= 1;
+                }
+            }
+            Clause::Big(v) => {
+                let mut index = v.len() - 1;
+                loop {
+                    if v[index].references(var) {
+                        if index == v.len() - 1 {
+                            let _ = v.pop().unwrap();
+                        } else {
+                            v[index] = v.pop().unwrap();
+                        }
+                    }
+                    if index == 0 {
+                        break;
+                    }
+                    index -= 1;
+                }
+                if v.len() <= SMALL_CAP {
+                    *self = Clause::Small(v.as_slice().try_into().unwrap())
+                }
+            }
+        }
+    }
+
     /// check contains literal
     pub fn contains(&self, value: &Literal) -> bool {
         match self {
@@ -345,7 +413,7 @@ pub fn dpll_erase_one_literal(input: &mut Cnf, item: Literal) {
     let remove_item = item.not();
     input.retain(|n| !n.contains(&item));
     for node in input.iter_mut() {
-        node.retain(|f| *f != remove_item);
+        node.remove(&remove_item);
     }
 }
 
@@ -392,12 +460,12 @@ pub fn dpll_split(input: &mut Cnf, point: &Variable) -> (Cnf, i32, i32) {
     while let Some(node) = input.pop() {
         if node.contains(&point.t()) {
             let mut items = node.clone();
-            items.retain(|f| !f.references(point));
+            items.remove_variable(point);
             count2 += items.len();
             result2.push(items);
         } else if node.contains(&point.f()) {
             let mut items = node.clone();
-            items.retain(|f| !f.references(point));
+            items.remove_variable(point);
             count1 += items.len();
             result1.push(items);
         } else {
@@ -733,8 +801,8 @@ mod tests {
         dpll_erase_one_literal(&mut f, one_lit.unwrap());
         assert_eq!(f.len(), 3);
         assert_eq!(f[0].len(), 2);
-        assert_eq!(f[0][0], q.t());
-        assert_eq!(f[0][1], r.f());
+        assert_eq!(f[0][0], r.f());
+        assert_eq!(f[0][1], q.t());
         assert_eq!(f[1].len(), 1);
         assert_eq!(f[1][0], q.f());
         assert_eq!(f[2].len(), 2);
