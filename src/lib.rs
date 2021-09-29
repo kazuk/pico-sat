@@ -7,16 +7,16 @@
 //! # How to use solver
 //!
 //! ```rust
-//! use pico_sat::{Variables, solve_one, heuristics::SplitOnMaxVars };
+//! use pico_sat::{Variables, solve_one, heuristics::SplitOnMaxVars, Clause };
 //! let mut vars = Variables::new();
 //! let o = vars.create();
 //! let p = vars.create();
 //! let q = vars.create();
 //! let r = vars.create();
 //! let mut f = vec![
-//!    vec![ p.t(), q.t(), r.f() ],
-//!    vec![ p.f(), r.f() ],
-//!    vec![ r.t() ]
+//!    Clause::from_vec(vec![ p.t(), q.t(), r.f() ]),
+//!    Clause::from_vec(vec![ p.f(), r.f() ]),
+//!    Clause::from_vec(vec![ r.t() ]),
 //! ];
 //! match solve_one(&mut f, 3, &SplitOnMaxVars { count_vars: vars.count() as usize} ) {
 //!     Some(answer) => {
@@ -50,8 +50,8 @@ pub mod solver;
 use std::cmp::Ordering;
 
 pub use boolean_expression::*;
-use solver::{Cnf, SolverHeuristics};
-pub use solver::{Literal, Variable, Variables};
+use solver::SolverHeuristics;
+pub use solver::{Clause, Cnf, Literal, Variable, Variables};
 
 /// heuristic option for SAT solver
 pub mod heuristics;
@@ -70,16 +70,16 @@ pub mod heuristics;
 /// # Examples
 ///
 /// ```rust
-/// use pico_sat::{Variables, solve_one, heuristics::SplitOnMaxVars};
+/// use pico_sat::{Variables, solve_one, heuristics::SplitOnMaxVars, Clause};
 /// let mut vars = Variables::new();
 /// let o = vars.create();
 /// let p = vars.create();
 /// let q = vars.create();
 /// let r = vars.create();
 /// let mut f = vec![
-///    vec![ p.t(), q.t(), r.f() ], //    ( P ||  Q || !R )
-///    vec![ p.f(), r.f() ],        // && (!P || !R )
-///    vec![ r.t() ]                // && ( R)
+///    Clause::from_vec(vec![ p.t(), q.t(), r.f() ]), //    ( P ||  Q || !R )
+///    Clause::from_vec(vec![ p.f(), r.f() ]),        // && (!P || !R )
+///    Clause::from_vec(vec![ r.t() ])                // && ( R)
 /// ];
 /// match solve_one(&mut f, 4, &SplitOnMaxVars { count_vars: vars.count() as usize} ) {
 ///     Some(answer) => {
@@ -99,7 +99,7 @@ pub mod heuristics;
 /// }
 /// ```
 pub fn solve_one<S: SolverHeuristics>(
-    input: &mut Vec<Vec<Literal>>,
+    input: &mut Cnf,
     satisfy_vars: u32,
     heuristics: &S,
 ) -> Option<Vec<Literal>> {
@@ -108,7 +108,7 @@ pub fn solve_one<S: SolverHeuristics>(
 
 /// SAT solve and returns all result
 pub fn solve_all<S: SolverHeuristics>(
-    input: &mut Vec<Vec<Literal>>,
+    input: &mut Cnf,
     satisfy_vars: u32,
     heuristics: &S,
 ) -> Vec<Vec<Literal>> {
@@ -117,7 +117,7 @@ pub fn solve_all<S: SolverHeuristics>(
 
 /// Async version of solve_one
 #[cfg(feature = "async")]
-pub async fn solve_one_async(input: Vec<Vec<Literal>>) -> Option<Vec<Literal>> {
+pub async fn solve_one_async(input: Cnf) -> Option<Vec<Literal>> {
     use crate::solver::SolverAction;
 
     let result = solver::async_solver::solve_one_async(input).await;
@@ -126,7 +126,7 @@ pub async fn solve_one_async(input: Vec<Vec<Literal>>) -> Option<Vec<Literal>> {
 
 /// Async version of solve_all
 #[cfg(feature = "async")]
-pub async fn solve_all_async(input: Vec<Vec<Literal>>) -> Vec<Vec<Literal>> {
+pub async fn solve_all_async(input: Cnf) -> Vec<Vec<Literal>> {
     use solver::SolverAction;
 
     let results = solver::async_solver::solve_all_async(input).await;
@@ -137,7 +137,7 @@ pub async fn solve_all_async(input: Vec<Vec<Literal>>) -> Vec<Vec<Literal>> {
 }
 
 #[allow(clippy::ptr_arg)]
-fn node_compare(left: &Vec<Literal>, right: &Vec<Literal>) -> Ordering {
+fn node_compare(left: &Clause, right: &Clause) -> Ordering {
     match (left.len(), right.len()) {
         (x, y) if x < y => Ordering::Less,
         (x, y) if x > y => Ordering::Greater,

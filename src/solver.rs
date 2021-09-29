@@ -1,11 +1,168 @@
-use std::collections::{HashMap, HashSet};
+use arrayvec::ArrayVec;
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    convert::TryInto,
+    ops::Index,
+};
 
 /// async solvers
 #[cfg(feature = "async")]
 pub mod async_solver;
 
+const SMALL_CAP: usize = 8;
+/// Clause is literal vector
+#[derive(Clone, Debug)]
+pub enum Clause {
+    /// Small clause, clause item less than 8
+    Small(ArrayVec<Literal, SMALL_CAP>),
+    /// Big clause, clause item more than 8
+    Big(Vec<Literal>),
+}
+
+impl Clause {
+    /// create small Clause
+    pub fn new() -> Self {
+        Clause::Small(ArrayVec::new())
+    }
+
+    /// create Clause contains one literal
+    pub fn from_one(lit: Literal) -> Self {
+        let mut result = Clause::new();
+        result.push(lit);
+        result
+    }
+
+    /// create Clause from litral vector
+    pub fn from_vec(vec: Vec<Literal>) -> Self {
+        if vec.len() > SMALL_CAP {
+            Clause::Big(vec)
+        } else {
+            Clause::Small(vec.as_slice().try_into().unwrap())
+        }
+    }
+
+    /// get clause length
+    pub fn len(&self) -> usize {
+        match self {
+            Clause::Small(s) => s.len(),
+            Clause::Big(b) => b.len(),
+        }
+    }
+
+    /// true if clause is empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// check contains literal
+    pub fn contains(&self, value: &Literal) -> bool {
+        match self {
+            Clause::Small(s) => s.contains(value),
+            Clause::Big(b) => b.contains(value),
+        }
+    }
+
+    /// get iterator
+    pub fn iter(&self) -> std::slice::Iter<'_, Literal> {
+        match self {
+            Clause::Small(s) => s.iter(),
+            Clause::Big(b) => b.iter(),
+        }
+    }
+
+    /// retain literal
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: std::ops::FnMut(&Literal) -> bool,
+    {
+        match self {
+            Clause::Small(s) => s.retain(|x| f(x)),
+            Clause::Big(b) => {
+                b.retain(|x| f(x));
+                if b.len() <= SMALL_CAP {
+                    *self = Clause::Small(b.as_slice().try_into().unwrap())
+                }
+            }
+        }
+    }
+
+    /// sort by compare
+    pub fn sort_by<F>(&mut self, compare: F)
+    where
+        F: FnMut(&Literal, &Literal) -> Ordering,
+    {
+        match self {
+            Clause::Small(s) => s.sort_by(compare),
+            Clause::Big(b) => b.sort_by(compare),
+        }
+    }
+
+    /// append literal from other
+    pub fn append(&mut self, other: &mut Clause) {
+        // cap limit check and upgrade
+        match self {
+            Clause::Small(s) => {
+                if s.len() + other.len() > SMALL_CAP {
+                    let v = s.to_vec();
+                    *self = Clause::Big(v);
+                }
+            }
+            _ => {}
+        }
+        match (self, other) {
+            (Clause::Small(s), Clause::Small(o)) => {
+                for item in o.iter() {
+                    s.push(*item);
+                }
+                o.clear();
+            }
+            (Clause::Small(s), Clause::Big(o)) => {
+                for item in o.iter() {
+                    s.push(*item);
+                }
+                o.clear();
+            }
+            (Clause::Big(s), Clause::Small(o)) => {
+                for item in o.iter() {
+                    s.push(*item);
+                }
+                o.clear();
+            }
+            (Clause::Big(s), Clause::Big(o)) => s.append(o),
+        }
+    }
+
+    /// add literal to clause
+    pub fn push(&mut self, value: Literal) {
+        match self {
+            Clause::Small(s) => {
+                if s.len() >= SMALL_CAP {
+                    let mut v = s.to_vec();
+                    v.push(value);
+                    *self = Clause::Big(s.to_vec())
+                } else {
+                    s.push(value)
+                }
+            }
+            Clause::Big(v) => v.push(value),
+        }
+    }
+}
+
+impl Index<usize> for Clause {
+    type Output = Literal;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        match self {
+            Clause::Small(s) => s.index(index),
+            Clause::Big(b) => b.index(index),
+        }
+    }
+}
+
 /// Conjunctive normal form for SAT input
-pub type Cnf = Vec<Vec<Literal>>;
+pub type Cnf = Vec<Clause>;
 
 /// SAT variable
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
@@ -327,16 +484,16 @@ fn solve_partial(input: &mut Cnf) -> Vec<SolverAction> {
 /// # Examples
 ///
 /// ```rust
-/// use pico_sat::{Variables, solve_one, heuristics::SplitOnMaxVars };
+/// use pico_sat::{Variables, solve_one, heuristics::SplitOnMaxVars,Clause };
 /// let mut vars = Variables::new();
 /// let o = vars.create();
 /// let p = vars.create();
 /// let q = vars.create();
 /// let r = vars.create();
 /// let mut f = vec![
-///    vec![ p.t(), q.t(), r.f() ], //    ( P ||  Q || !R )
-///    vec![ p.f(), r.f() ],        // && (!P || !R )
-///    vec![ r.t() ]                // && ( R)
+///    Clause::from_vec(vec![ p.t(), q.t(), r.f() ]), //    ( P ||  Q || !R )
+///    Clause::from_vec(vec![ p.f(), r.f() ]),        // && (!P || !R )
+///    Clause::from_vec(vec![ r.t() ])                // && ( R)
 /// ];
 /// match solve_one(&mut f, 4, &SplitOnMaxVars { count_vars: vars.count() as usize } ) {
 ///     Some(answer) => {
@@ -500,7 +657,7 @@ mod tests {
         heuristics::SplitOnMaxVars,
         solver::{
             dpll_erase_one_literal, dpll_erase_pure_literal, dpll_find_one_literal,
-            dpll_find_pure_literal, dpll_split, solve_all, solve_one, Variables,
+            dpll_find_pure_literal, dpll_split, solve_all, solve_one, Clause, Variables,
         },
     };
 
@@ -509,7 +666,10 @@ mod tests {
         let mut vars = Variables::new();
         let var1 = vars.create();
         let var2 = vars.create();
-        let mut f = vec![vec![var1.t(), var2.f()], vec![var1.f()]];
+        let mut f = vec![
+            Clause::from_vec(vec![var1.t(), var2.f()]),
+            Clause::from_vec(vec![var1.f()]),
+        ];
         assert_eq!(dpll_find_pure_literal(&f), Some(var2.f()));
         dpll_erase_pure_literal(&mut f, var2.f());
         assert_eq!(f.len(), 1);
@@ -522,7 +682,10 @@ mod tests {
         let mut vars = Variables::new();
         let var1 = vars.create();
         let var2 = vars.create();
-        let mut f = vec![vec![var1.t(), var2.f()], vec![var1.f()]];
+        let mut f = vec![
+            Clause::from_vec(vec![var1.t(), var2.f()]),
+            Clause::from_vec(vec![var1.f()]),
+        ];
         assert_eq!(dpll_find_one_literal(&f), Some(var1.f()));
         dpll_erase_one_literal(&mut f, var1.f());
         assert_eq!(f.len(), 1);
@@ -536,7 +699,11 @@ mod tests {
         let p = vars.create();
         let q = vars.create();
         let r = vars.create();
-        let mut f = vec![vec![p.t(), q.f()], vec![p.f(), r.t()], vec![q.t()]];
+        let mut f = vec![
+            Clause::from_vec(vec![p.t(), q.f()]),
+            Clause::from_vec(vec![p.f(), r.t()]),
+            Clause::from_vec(vec![q.t()]),
+        ];
         eprintln!("input formula: {:?}", f);
         eprintln!("spilt P: {:?}", p);
         let (_fpart, _tcnt, _fcnt) = dpll_split(&mut f, &p);
@@ -556,10 +723,10 @@ mod tests {
         let q = vars.create();
         let r = vars.create();
         let mut f = vec![
-            vec![p.t(), q.t(), r.f()],
-            vec![q.f(), p.t()],
-            vec![p.f()],
-            vec![r.t(), q.t()],
+            Clause::from_vec(vec![p.t(), q.t(), r.f()]),
+            Clause::from_vec(vec![q.f(), p.t()]),
+            Clause::from_vec(vec![p.f()]),
+            Clause::from_vec(vec![r.t(), q.t()]),
         ];
         let one_lit = dpll_find_one_literal(&f);
         assert_eq!(one_lit, Some(p.f()));
@@ -599,10 +766,10 @@ mod tests {
         let u = vars.create();
 
         let mut f = vec![
-            vec![s.t(), t.t()],
-            vec![s.f(), t.f()],
-            vec![p.t(), u.t()],
-            vec![p.f(), u.t()],
+            Clause::from_vec(vec![s.t(), t.t()]),
+            Clause::from_vec(vec![s.f(), t.f()]),
+            Clause::from_vec(vec![p.t(), u.t()]),
+            Clause::from_vec(vec![p.f(), u.t()]),
         ];
         let pure_lit = dpll_find_pure_literal(&f);
         assert_eq!(pure_lit, Some(u.t()));
@@ -646,7 +813,11 @@ mod tests {
         let p = vars.create();
         let q = vars.create();
         let r = vars.create();
-        let mut f = vec![vec![p.t(), q.t(), r.f()], vec![p.f(), r.f()], vec![r.t()]];
+        let mut f = vec![
+            Clause::from_vec(vec![p.t(), q.t(), r.f()]),
+            Clause::from_vec(vec![p.f(), r.f()]),
+            Clause::from_vec(vec![r.t()]),
+        ];
         match solve_one(
             &mut f,
             3,
@@ -673,7 +844,10 @@ mod tests {
         let s = vars.create();
         let t = vars.create();
 
-        let mut f = vec![vec![s.t(), t.t()], vec![s.f(), t.f()]];
+        let mut f = vec![
+            Clause::from_vec(vec![s.t(), t.t()]),
+            Clause::from_vec(vec![s.f(), t.f()]),
+        ];
         let results = solve_all(
             &mut f,
             2,

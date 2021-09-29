@@ -1,4 +1,7 @@
-use crate::{solver::Variable, Literal, Variables};
+use crate::{
+    solver::{Clause, Cnf, Variable},
+    Literal, Variables,
+};
 use std::{
     collections::{HashSet, VecDeque},
     fmt::Display,
@@ -90,7 +93,7 @@ impl Display for Node {
 impl Node {
     /// convert Node to Solver input (Conjective Normal Foam)
     #[tracing::instrument]
-    pub fn to_cnf(&self, vars: &mut Variables) -> Vec<Vec<Literal>> {
+    pub fn to_cnf(&self, vars: &mut Variables) -> Cnf {
         trace!("to_cnf");
 
         // converts Literal node or Not Literal node to solver Literal
@@ -125,11 +128,11 @@ impl Node {
         }
 
         // recursive get single or-literal
-        fn to_literals(node: Node) -> Vec<Literal> {
+        fn to_literals(node: Node) -> Clause {
             match node {
                 Node::And(_) => panic!("to_literals on AND"),
                 Node::Or(items) => {
-                    let mut result = Vec::new();
+                    let mut result = Clause::new();
                     for item in items {
                         match item {
                             Node::And(_) => panic!("to_literals on AND content"),
@@ -140,15 +143,13 @@ impl Node {
                     }
                     result
                 }
-                Node::Literal(_, _) | Node::Not(_) => {
-                    vec![to_literal(node)]
-                }
+                Node::Literal(_, _) | Node::Not(_) => Clause::from_one(to_literal(node)),
                 Node::True | Node::False => panic!("to_literals on TRUE/FALSE"),
             }
         }
 
         // recursive get or-literals
-        fn collect_literals(node: Node) -> Vec<Vec<Literal>> {
+        fn collect_literals(node: Node) -> Cnf {
             match node {
                 Node::And(items) => {
                     let mut result = Vec::new();

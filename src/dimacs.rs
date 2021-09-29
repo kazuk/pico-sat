@@ -26,7 +26,7 @@ impl DimacsWriter {
             .unwrap_or_default();
         writeln!(file, "p cnf {} {}", max_var, cnf.len())?;
         for node in cnf {
-            for lit in node {
+            for lit in node.iter() {
                 match lit.value() {
                     true => write!(file, "{} ", &lit.var().index())?,
                     false => write!(file, "-{} ", &lit.var().index())?,
