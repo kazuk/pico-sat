@@ -176,12 +176,11 @@ impl SolverAction {
 /// One literal rule : find erase-able literal from input
 #[allow(clippy::ptr_arg)]
 pub fn dpll_find_one_literal(input: &Cnf) -> Option<Literal> {
-    for node in input.iter() {
-        if node.len() == 1 {
-            return Some(node[0]);
-        }
+    if let Some(node) = input.iter().find(|f| f.len() == 1) {
+        Some(node[0])
+    } else {
+        None
     }
-    None
 }
 
 /// One literal rule : erase literal from input
@@ -235,26 +234,18 @@ pub fn dpll_split(input: &mut Cnf, point: &Variable) -> (Cnf, i32, i32) {
     let mut count2 = 0;
     while let Some(node) = input.pop() {
         if node.contains(&point.t()) {
-            let mut items = Vec::new();
-            for item in node.iter() {
-                if !item.references(point) {
-                    items.push(*item);
-                    count1 += 1;
-                }
-            }
+            let mut items = node.clone();
+            items.retain(|f| !f.references(point));
+            count2 += items.len();
             result2.push(items);
         } else if node.contains(&point.f()) {
-            let mut items = Vec::new();
-            for item in node.iter() {
-                if !item.references(point) {
-                    items.push(*item);
-                    count2 += 1;
-                }
-            }
+            let mut items = node.clone();
+            items.retain(|f| !f.references(point));
+            count1 += items.len();
             result1.push(items);
         } else {
-            count1 += node.len() as i32;
-            count2 += node.len() as i32;
+            count1 += node.len();
+            count2 += node.len();
             result1.push(node.clone());
             result2.push(node.clone());
         }
@@ -263,7 +254,7 @@ pub fn dpll_split(input: &mut Cnf, point: &Variable) -> (Cnf, i32, i32) {
     while let Some(node) = result1.pop() {
         input.push(node);
     }
-    (result2, count1, count2)
+    (result2, count1 as i32, count2 as i32)
 }
 
 /// check input is SAT
